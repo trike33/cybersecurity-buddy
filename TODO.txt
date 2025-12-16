@@ -1,0 +1,5 @@
+- [ ] Fix scope creation
+- [ ] Ensure scan is ready to run and saves files in the right place
+- [ ] Review the config database setup
+- [ ] Review requirements.txt
+- [ ] Look for a way to save report templates as raw markdown docs instead of db entries  

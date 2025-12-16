@@ -1,0 +1,81 @@
+/* --- Global Defaults --- */
+QWidget {
+    background-color: #2e3440;
+    color: #d8dee9;
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+/* --- Buttons --- */
+QPushButton {
+    background-color: #434c5e;
+    border: 1px solid #4c566a;
+    padding: 6px 12px;
+    border-radius: 4px;
+    color: #eceff4;
+}
+QPushButton:hover {
+    background-color: #4c566a;
+}
+QPushButton:pressed {
+    background-color: #3b4252;
+}
+QPushButton#StartButton {
+    background-color: #5e81ac; /* Calm Blue */
+    font-weight: bold;
+}
+QPushButton#StopButton {
+    background-color: #bf616a; /* Soft Red */
+    font-weight: bold;
+}
+
+/* --- Inputs & Lists --- */
+QLineEdit, QTextEdit, QPlainTextEdit, QListView, QTreeView, QListWidget, QTableView {
+    background-color: #3b4252;
+    border: 1px solid #4c566a;
+    padding: 5px;
+    color: #d8dee9;
+    selection-background-color: #5e81ac;
+    selection-color: #eceff4;
+}
+
+/* --- Standard Tabs (Top Bar) --- */
+QTabWidget::pane {
+    border-top: 2px solid #434c5e;
+}
+QTabBar::tab {
+    background: #2e3440;
+    border: 1px solid #2e3440;
+    padding: 8px 16px;
+    color: #d8dee9;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+QTabBar::tab:selected {
+    background: #434c5e;
+    border-bottom: 2px solid #88c0d0; /* Cyan Accent */
+    font-weight: bold;
+}
+QTabBar::tab:!selected:hover {
+    background: #3b4252;
+}
+
+/* --- Progress Bar --- */
+QProgressBar {
+    border: 1px solid #4c566a;
+    border-radius: 5px;
+    text-align: center;
+    color: #eceff4;
+    background-color: #2e3440;
+}
+QProgressBar::chunk {
+    background-color: #a3be8c; /* Green */
+    width: 20px;
+}
+
+/* --- Headers --- */
+QHeaderView::section {
+    background-color: #434c5e;
+    color: #eceff4;
+    padding: 4px;
+    border: 1px solid #4c566a;
+}
