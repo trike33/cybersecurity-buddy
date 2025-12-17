@@ -787,12 +787,12 @@ class CyberSecBuddyApp(QMainWindow):
         self.content_stack.addWidget(self.scan_control_tab) 
         self.content_stack.addWidget(self.enumeration_widget)
         self.content_stack.addWidget(self.playground_tab)
+        self.content_stack.addWidget(self.attack_vectors_widget)
         self.content_stack.addWidget(self.exploiting_widget)
         self.content_stack.addWidget(self.report_tab)
-        self.content_stack.addWidget(self.attack_vectors_widget)
 
         self.sidebar_btns = []
-        labels = ["Scan Control", "Enumeration", "Playground", "Exploiting", "Reporting", "Attack Vectors"]
+        labels = ["Scan Control", "Enumeration", "Playground", "Attack Vectors", "Exploiting", " Reporting"]
         for i, label in enumerate(labels):
             btn = QPushButton(label)
             btn.setCheckable(True)
