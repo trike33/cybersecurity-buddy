@@ -101,7 +101,7 @@ def initialize_db():
 
         # Default standard commands (RENAMED variable)
         default_recon_commands = [
-            ("internal:run_ipparser --scope_file {scope_file} --output scopeips", 0, 0, 1),
+            ("internal:run_ipparser --scope_file scope.txt --output scopeips", 0, 0, 1),
             ("httpx -title -tech-detect -sc -cl -fr -o httpx_out -l scopeips", 0, 0, 2),
             ("internal:run_domain_enum --subdomains httpx_out_domains --scope scopeips --output domains", 0, 0, 3),
             ("subfinder -dL domains -o subfinder_out", 0, 0, 4),

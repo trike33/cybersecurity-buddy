@@ -666,6 +666,7 @@ class CyberSecBuddyApp(QMainWindow):
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
+        client_name = "Target"
         
         if self.project_db_path:
             self.project_data = project_db.load_project_data(self.project_db_path)
@@ -683,7 +684,7 @@ class CyberSecBuddyApp(QMainWindow):
         self.scan_control_tab = ScanControlWidget(self.working_directory, self.icon_path, project_db_path=self.project_db_path)
         self.terminal_tab = CustomCommandsWidget(self.working_directory, self.icon_path)
         self.sudo_terminal_tab = SudoTerminalWidget(self.icon_path)
-        self.report_tab = ReportTabWidget(db_path=self.project_db_path)
+        self.report_tab = ReportTabWidget(db_path=self.project_db_path, project_name=client_name)
         self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path, self.terminal_tab)
 
         self.enumeration_widget = QLabel("Enumeration Tools")
