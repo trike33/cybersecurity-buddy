@@ -1,4 +1,5 @@
 import sys
+import random
 import os
 import glob
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QDialog, 
@@ -7,7 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QDialog,
                              QFileDialog, QMessageBox, QListWidget, QLineEdit,
                              QComboBox, QDateEdit, QTextEdit, QDialogButtonBox)
 from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate
-from PyQt5.QtGui import QIcon, QFont, QColor
+from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap
 import shutil
 
 # Import utilities
@@ -46,6 +47,40 @@ class StartupWizard(QDialog):
         super().__init__()
         self.setWindowTitle("CyberSec Buddy - Launcher")
         self.setFixedSize(1200, 900)
+
+        # --- RANDOM WALLPAPER LOGIC ---
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        # We will look for images inside 'resources/img/wallpapers'
+        wallpaper_dir = os.path.join(base_path, "themes", "img")
+        
+        selected_wallpaper = None
+        
+        if os.path.exists(wallpaper_dir):
+            # Get all valid image files
+            images = [f for f in os.listdir(wallpaper_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            if images:
+                selected_wallpaper = os.path.join(wallpaper_dir, random.choice(images))
+        
+        # Fallback: check for a default single image if folder is empty or missing
+        if not selected_wallpaper:
+            default_bg = os.path.join(base_path, "themes", "img", "wizard_bg.jpeg")
+            if os.path.exists(default_bg):
+                selected_wallpaper = default_bg
+
+        # Apply the background if we found something
+        if selected_wallpaper:
+            self.bg_label = QLabel(self)
+            self.bg_label.setGeometry(0, 0, 1200, 900)
+            self.bg_label.setPixmap(QPixmap(selected_wallpaper))
+            self.bg_label.setScaledContents(True)
+            
+            # CSS Opacity Trick:
+            # Note: This opacity style might not affect the QPixmap on some systems.
+            # If the image is too bright, it's better to darken the images themselves in Photoshop/GIMP.
+            self.bg_label.setStyleSheet("opacity: 0.2;") 
+            
+            self.bg_label.lower() # Send to back
         
         self.project_db_path = None
         self.engagement_type = "Pentest" # Default
@@ -166,6 +201,16 @@ class StartupWizard(QDialog):
                 border: 2px solid #00d2ff;
                 background-color: #252535;
             }
+            /* Make inner frames transparent so background shows through */
+            QFrame {
+                background-color: transparent; 
+                border: none;
+            }
+
+            QDialog { 
+                background-color: #1e1e2f; /* Keep dark base color behind the image */
+                color: #ffffff; 
+            }
         """)
 
     # --- UI SETUPS ---
@@ -194,6 +239,10 @@ class StartupWizard(QDialog):
         layout.addWidget(subtitle, alignment=Qt.AlignCenter)
         layout.addWidget(btn_start, alignment=Qt.AlignCenter)
         layout.addStretch()
+
+    def start_new_project(self):
+        self.reset_create_state()
+        self.slide_to_page(self.page_create)
 
     def setup_selection_ui(self):
         layout = QVBoxLayout(self.page_selection)
@@ -228,7 +277,7 @@ class StartupWizard(QDialog):
         btn_new.setObjectName("ProjectBtn")
         btn_new.setFixedSize(300, 200)
         btn_new.setCursor(Qt.PointingHandCursor)
-        btn_new.clicked.connect(lambda: self.slide_to_page(self.page_create))
+        btn_new.clicked.connect(self.start_new_project)
 
         # Load Existing
         btn_load = QPushButton("Load Existing Project")
@@ -280,7 +329,7 @@ class StartupWizard(QDialog):
         self.inp_client.setPlaceholderText("Client Name (e.g. Acme Corp)")
         
         self.combo_type = QComboBox()
-        self.combo_type.addItems(["Pentest", "Bug Bounty", "Red Team", "Vulnerability Assessment"])
+        self.combo_type.addItems(["Pentest", "Bug Bounty"])
         
         self.date_edit = QDateEdit()
         self.date_edit.setDate(QDate.currentDate().addDays(14))
@@ -357,6 +406,15 @@ class StartupWizard(QDialog):
         layout.addStretch()
         layout.addWidget(form_widget, alignment=Qt.AlignCenter)
         layout.addStretch()
+    
+    def reset_create_state(self):
+        self.domain_mode = None
+        self.domain_data = ""
+        self.scope_mode = None
+        self.scope_data = ""
+
+        self.inp_domains_display.clear()
+        self.inp_scope_display.clear()
 
     def setup_load_ui(self):
         layout = QVBoxLayout(self.page_load)
@@ -549,6 +607,7 @@ class StartupWizard(QDialog):
                 return
 
         # 2. Handle Domains File (Writes self.domain_data)
+        print(f"{self.domain_data} {self.domain_mode}")
         final_domains_path = os.path.join(full_project_path, "domains.txt")
         try:
             if self.domain_mode == 'content':
@@ -562,6 +621,7 @@ class StartupWizard(QDialog):
             print(f"Error saving domains: {e}")
 
         # 3. Handle Scope File (Writes self.scope_data)
+        print(f"{self.scope_data} {self.scope_mode}")
         final_scope_path = os.path.join(full_project_path, "scope.txt")
         try:
             if self.scope_mode == 'content':
@@ -583,12 +643,14 @@ class StartupWizard(QDialog):
             with open(final_domains_path, 'r') as f:
                 domain_list = [l.strip() for l in f if l.strip()]
 
+        print(f"{self.domain_data} {self.domain_mode}")
+        print(f"{self.scope_data} {self.scope_mode}")
         project_db.save_project_details(self.project_db_path, client, eng_type, deadline, domain_list)
         
         self.engagement_type = eng_type
         self.accept()
 # ---------------------------------------------------------
-# 2. MAIN APPLICATION (Fixed Crash)
+# 2. MAIN APPLICATION 
 # ---------------------------------------------------------
 class CyberSecBuddyApp(QMainWindow):
     def __init__(self, engagement_type="Pentest", project_db_path=None):
@@ -621,7 +683,7 @@ class CyberSecBuddyApp(QMainWindow):
         self.scan_control_tab = ScanControlWidget(self.working_directory, self.icon_path, project_db_path=self.project_db_path)
         self.terminal_tab = CustomCommandsWidget(self.working_directory, self.icon_path)
         self.sudo_terminal_tab = SudoTerminalWidget(self.icon_path)
-        self.report_tab = ReportTabWidget()
+        self.report_tab = ReportTabWidget(db_path=self.project_db_path)
         self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path, self.terminal_tab)
 
         self.enumeration_widget = QLabel("Enumeration Tools")

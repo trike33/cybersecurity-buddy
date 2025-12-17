@@ -4,66 +4,36 @@ from PyQt5.QtWidgets import (
     QCheckBox, QSpinBox, QMessageBox, QInputDialog, QLabel,
     QTextEdit, QFileDialog, QSplitter, QHeaderView, QTabWidget, QComboBox
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QFont, QDesktopServices
 from utils import db as command_db
 import os
-from PyQt5.QtGui import QFont
 
-class TemplateEditDialog(QDialog):
-    """A dialog for adding/editing a structured report template."""
-    def __init__(self, parent=None, data=None):
-        super().__init__(parent)
-        self.setWindowTitle("Edit Report Template")
-        self.setGeometry(250, 250, 600, 500)
-        
-        layout = QVBoxLayout(self)
-        self.category_input = QLineEdit(data['category'] if data else "")
-        self.category_input.setPlaceholderText("Vulnerability Category (e.g., SQL Injection)")
-        
-        self.tabs = QTabWidget()
-        self.desc_input = QTextEdit(data.get('description', '') if data else "")
-        self.impact_input = QTextEdit(data.get('impact', '') if data else "")
-        self.validation_input = QTextEdit(data.get('validation_steps', '') if data else "")
-        self.fix_input = QTextEdit(data.get('fix_recommendation', '') if data else "")
-
-        self.tabs.addTab(self.desc_input, "Description")
-        self.tabs.addTab(self.impact_input, "Impact")
-        self.tabs.addTab(self.validation_input, "Validation Steps")
-        self.tabs.addTab(self.fix_input, "Recommended Fix")
-
-        layout.addWidget(QLabel("Category:"))
-        layout.addWidget(self.category_input)
-        layout.addWidget(self.tabs)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-    def get_data(self):
-        return {
-            'category': self.category_input.text(),
-            'description': self.desc_input.toPlainText(),
-            'impact': self.impact_input.toPlainText(),
-            'validation': self.validation_input.toPlainText(),
-            'fix': self.fix_input.toPlainText()
-        }
+# --- TEMPLATE VIEWER (Read-Only / File System) ---
 
 class TemplateEditorDialog(QDialog):
-    """A dialog for managing all report templates with a better view."""
+    """
+    A dialog for viewing report templates.
+    Editing is done via the filesystem (Markdown files), not the GUI.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Report Template Manager")
+        self.setWindowTitle("Report Template Viewer")
         self.setGeometry(200, 200, 900, 600)
         
         layout = QVBoxLayout(self)
+        
+        # Helper text
+        info_label = QLabel("Templates are loaded from the 'templates/' folder. Edit the Markdown files directly.")
+        info_label.setStyleSheet("color: gray; font-style: italic;")
+        layout.addWidget(info_label)
+
         splitter = QSplitter(Qt.Horizontal)
         
         self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["ID", "Category"])
-        self.table.setColumnHidden(0, True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.setColumnCount(1) # Only Category needed
+        self.table.setHorizontalHeaderLabels(["Category"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
         self.template_preview = QTextEdit(readOnly=True)
         self.template_preview.setFont(QFont("Courier New"))
@@ -74,82 +44,64 @@ class TemplateEditorDialog(QDialog):
         layout.addWidget(splitter)
         
         button_layout = QHBoxLayout()
-        add_btn = QPushButton("Add")
-        edit_btn = QPushButton("Edit")
-        delete_btn = QPushButton("Delete")
+        refresh_btn = QPushButton("Refresh List")
+        open_folder_btn = QPushButton("Open Templates Folder")
+        close_btn = QPushButton("Close")
+        
+        button_layout.addWidget(open_folder_btn)
+        button_layout.addWidget(refresh_btn)
         button_layout.addStretch()
-        button_layout.addWidget(add_btn)
-        button_layout.addWidget(edit_btn)
-        button_layout.addWidget(delete_btn)
+        button_layout.addWidget(close_btn)
         layout.addLayout(button_layout)
 
         self.load_templates()
         
         self.table.itemSelectionChanged.connect(self.display_selected_template)
-        add_btn.clicked.connect(self.add_row)
-        edit_btn.clicked.connect(self.edit_row)
-        delete_btn.clicked.connect(self.delete_row)
+        refresh_btn.clicked.connect(self.load_templates)
+        open_folder_btn.clicked.connect(self.open_templates_folder)
+        close_btn.clicked.connect(self.accept)
 
     def load_templates(self):
+        """Loads templates from the filesystem via db.py."""
         self.table.setRowCount(0)
-        self.templates_data = command_db.get_all_templates() # Store all data
+        self.templates_data = command_db.get_all_templates() # Returns list of dicts (no IDs)
+        
         for tpl in self.templates_data:
             row_pos = self.table.rowCount()
             self.table.insertRow(row_pos)
-            self.table.setItem(row_pos, 0, QTableWidgetItem(str(tpl['id'])))
-            self.table.setItem(row_pos, 1, QTableWidgetItem(tpl['category']))
+            # Use Category as the display item
+            self.table.setItem(row_pos, 0, QTableWidgetItem(tpl['category']))
 
     def display_selected_template(self):
         selected_row = self.table.currentRow()
         if selected_row < 0: return
 
         template = self.templates_data[selected_row]
-        preview_text = f"""
-### Description ###
+        
+        # Reconstruct the Markdown view for preview
+        preview_text = f"""## Description
 {template.get('description', '')}
 
-### Impact ###
+## Impact
 {template.get('impact', '')}
 
-### Validation Steps ###
+## Validation Steps
 {template.get('validation_steps', '')}
 
-### Recommended Fix ###
+## Fix Recommendation
 {template.get('fix_recommendation', '')}
-        """
+"""
         self.template_preview.setPlainText(preview_text)
 
-    def add_row(self):
-        dialog = TemplateEditDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            data = dialog.get_data()
-            command_db.add_template(data['category'], data['description'], data['impact'], data['validation'], data['fix'])
-            self.load_templates()
+    def open_templates_folder(self):
+        """Opens the templates directory in the OS file explorer."""
+        folder_path = os.path.abspath("templates")
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path))
 
-    def edit_row(self):
-        selected_row = self.table.currentRow()
-        if selected_row < 0: return
-        
-        # --- FIX: Pass the full template dictionary to the edit dialog ---
-        current_data = self.templates_data[selected_row]
-        
-        dialog = TemplateEditDialog(self, data=current_data)
-        if dialog.exec_() == QDialog.Accepted:
-            new_data = dialog.get_data()
-            command_db.update_template(
-                current_data['id'], new_data['category'], new_data['description'],
-                new_data['impact'], new_data['validation'], new_data['fix']
-            )
-            self.load_templates()
 
-    def delete_row(self):
-        selected_row = self.table.currentRow()
-        if selected_row < 0: return
-        tpl_id = int(self.table.item(selected_row, 0).text())
-        reply = QMessageBox.question(self, 'Confirm Deletion', 'Are you sure?', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            command_db.delete_template(tpl_id)
-            self.load_templates()
+# --- FILE DIALOGS ---
 
 class DomainsFileDialog(QDialog):
     """A dialog for creating and editing a domains file."""
@@ -181,6 +133,9 @@ class DomainsFileDialog(QDialog):
                 self.accept()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not save file: {e}")
+
+
+# --- COMMAND EDITORS (SQLite Based) ---
 
 class CommandEditDialog(QDialog):
     """A dialog for adding or editing a single standard command."""
@@ -249,6 +204,7 @@ class CommandEditorDialog(QDialog):
         add_btn.clicked.connect(self.add_row)
         edit_btn.clicked.connect(self.edit_row)
         delete_btn.clicked.connect(self.delete_row)
+
     def load_commands(self):
         self.table.setRowCount(0)
         commands = command_db.get_all_commands()
@@ -301,6 +257,7 @@ class CommandEditorDialog(QDialog):
         if reply == QMessageBox.Yes:
             command_db.delete_command(cmd_id)
             self.load_commands()
+
 
 class SudoCommandEditorDialog(QDialog):
     """A dialog for adding/deleting commands in the sudo_commands table."""
@@ -360,6 +317,9 @@ class SudoCommandEditorDialog(QDialog):
         if reply == QMessageBox.Yes:
             command_db.delete_sudo_command(cmd_id)
             self.load_commands()
+
+
+# --- FUZZER ---
 
 class FuzzerDialog(QDialog):
     """A dialog for building and saving FFUF commands."""

@@ -1,11 +1,61 @@
 import sqlite3
 import os
+import re
 
 DB_FILE = "recon_automator.db"
+TEMPLATES_DIR = "templates"
 
 def get_db_connection():
     """Establishes a connection to the SQLite database."""
     return sqlite3.connect(DB_FILE)
+
+def ensure_templates_dir():
+    """Ensures the templates directory exists."""
+    if not os.path.exists(TEMPLATES_DIR):
+        os.makedirs(TEMPLATES_DIR)
+
+def parse_markdown_template(category, content):
+    """
+    Parses a raw markdown string into a structured dictionary.
+    Expects headers like '## Description', '## Impact', etc.
+    """
+    sections = {
+        'category': category,
+        'description': '',
+        'impact': '',
+        'validation_steps': '',
+        'fix_recommendation': ''
+    }
+    
+    # Regex to capture content between headers
+    patterns = {
+        'description': r'## Description\s*(.*?)\s*(?=##|$)',
+        'impact': r'## Impact\s*(.*?)\s*(?=##|$)',
+        'validation_steps': r'## Validation Steps\s*(.*?)\s*(?=##|$)',
+        'fix_recommendation': r'## Fix Recommendation\s*(.*?)\s*(?=##|$)'
+    }
+
+    for key, pattern in patterns.items():
+        match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+        if match:
+            sections[key] = match.group(1).strip()
+    
+    return sections
+
+def create_markdown_content(desc, impact, validation, fix):
+    """Formats the fields into a standard markdown structure."""
+    return f"""## Description
+{desc}
+
+## Impact
+{impact}
+
+## Validation Steps
+{validation}
+
+## Fix Recommendation
+{fix}
+"""
 
 def initialize_db():
     """Ensures all tables exist on startup and populates them if the DB is new."""
@@ -32,22 +82,8 @@ def initialize_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS interesting_keywords ( id INTEGER PRIMARY KEY, keyword TEXT NOT NULL UNIQUE )""")
 
-   # Report templates table 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS report_templates (
-        id INTEGER PRIMARY KEY,
-        category TEXT NOT NULL UNIQUE,
-        description TEXT,
-        impact TEXT,
-        validation_steps TEXT,
-        fix_recommendation TEXT
-    )""")
-
     # --- Populate with default data ONLY if the database file is new ---
     if not db_exists:
-        # (Default commands and sudo_commands insertion remains the same)
-        
-        # --- NEW: Default Keywords ---
         high_risk_words = [
             ('admin',), ('config',), ('settings',), ('database',), ('db',), ('sql',), ('query',),
             ('secret',), ('token',), ('jwt',), ('auth',), ('login',), ('password',), ('passwd',),
@@ -63,10 +99,8 @@ def initialize_db():
         cursor.executemany("INSERT INTO high_risk_keywords (keyword) VALUES (?)", high_risk_words)
         cursor.executemany("INSERT INTO interesting_keywords (keyword) VALUES (?)", interesting_words)
 
-    # --- Populate with default data ONLY if the database file is new ---
-    if not db_exists:
-        # Default standard commands
-        default_commands = [
+        # Default standard commands (RENAMED variable)
+        default_recon_commands = [
             ("internal:run_ipparser --scope_file {scope_file} --output scopeips", 0, 0, 1),
             ("httpx -title -tech-detect -sc -cl -fr -o httpx_out -l scopeips", 0, 0, 2),
             ("internal:run_domain_enum --subdomains httpx_out_domains --scope scopeips --output domains", 0, 0, 3),
@@ -77,9 +111,8 @@ def initialize_db():
             ("httpx -title -tech-detect -sc -cl -fr -o httpx_out_subdomains -l subdomains", 0, 0, 8),
             ("internal:run_format_ips --input scopeips --output scopeips_80808443", 0, 0, 9),
             ("httpx -l scopeips_80808443 -title -tech-detect -sc -cl -fr -o httpx_out_80808443", 0, 0, 10),
-            ("katana -list subdomains -jc -o katana_out_subdomains", 0, 0, 11)
         ]
-        cursor.executemany("INSERT INTO commands (command_text, run_in_background, use_shell, execution_order) VALUES (?, ?, ?, ?)", default_commands)
+        cursor.executemany("INSERT INTO commands (command_text, run_in_background, use_shell, execution_order) VALUES (?, ?, ?, ?)", default_recon_commands)
         
         # Default sudo commands
         default_sudo_commands = [
@@ -94,30 +127,41 @@ def initialize_db():
         for key, value in default_settings.items():
             cursor.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (key, value))
 
-       # Default templates   
-        default_templates = [
-            (
-                'Cross-Site Scripting (XSS)',
-                "The application is vulnerable to Cross-Site Scripting (XSS). The endpoint at {URL} does not properly sanitize user-supplied input, allowing an attacker to inject malicious scripts. These scripts are then executed in the victim's browser.",
-                "An attacker could hijack user sessions, deface the website, or redirect users to malicious sites, leading to credential theft and a loss of trust in the application.",
-                "1. Navigate to the vulnerable URL.\n2. Insert a standard XSS payload, such as `<script>alert('XSS')</script>`, into the affected parameter.\n3. Observe that the script executes in the browser.",
-                "Implement context-aware output encoding on all user-supplied data. Utilize a Content Security Policy (CSP) to restrict the sources from which scripts can be loaded."
-            ),
-            (
-                'SQL Injection (SQLi)',
-                "The application is vulnerable to SQL Injection. A parameter at the specified URL ({URL}) is directly used in a database query without proper sanitization, allowing an attacker to manipulate the query's logic.",
-                "Successful exploitation could lead to unauthorized access to sensitive data, modification or deletion of data, and potentially full server compromise.",
-                "1. Identify the vulnerable parameter in the URL.\n2. Submit a payload like `' OR 1=1 --`.\n3. Confirm that the application's response is altered, indicating that the query was manipulated (e.g., a successful login without a valid password).",
-                "Use parameterized queries (prepared statements) for all database interactions. Avoid building SQL queries with string concatenation. Enforce the principle of least privilege for database users."
-            )
-        ]
-        cursor.executemany("""
-            INSERT INTO report_templates (category, description, impact, validation_steps, fix_recommendation)
-            VALUES (?, ?, ?, ?, ?)
-        """, default_templates)
-
     conn.commit()
     conn.close()
+
+    # --- Initialize Default Templates (Seeding only) ---
+    ensure_templates_dir()
+    
+    # Define defaults structure
+    default_templates_data = [
+        (
+            'Cross-Site Scripting (XSS)',
+            "The application is vulnerable to Cross-Site Scripting (XSS). The endpoint at {URL} does not properly sanitize user-supplied input.",
+            "An attacker could hijack user sessions, deface the website, or redirect users to malicious sites.",
+            "1. Navigate to the vulnerable URL.\n2. Insert a standard XSS payload.\n3. Observe execution.",
+            "Implement context-aware output encoding on all user-supplied data. Utilize CSP."
+        ),
+        (
+            'SQL Injection (SQLi)',
+            "The application is vulnerable to SQL Injection. A parameter at {URL} is directly used in a database query.",
+            "Successful exploitation could lead to unauthorized access to sensitive data or full server compromise.",
+            "1. Identify vulnerable parameter.\n2. Submit payload `' OR 1=1 --`.\n3. Confirm altered response.",
+            "Use parameterized queries (prepared statements) for all database interactions."
+        )
+    ]
+
+    # Only write defaults if they don't exist (prevents overwriting user edits)
+    for category, desc, impact, val, fix in default_templates_data:
+        safe_filename = "".join([c for c in category if c.isalnum() or c in (' ', '-', '_')]).strip() + ".md"
+        filepath = os.path.join(TEMPLATES_DIR, safe_filename)
+        
+        if not os.path.exists(filepath):
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(create_markdown_content(desc, impact, val, fix))
+
+
+# --- Database CRUD Functions ---
 
 def get_all_commands():
     """Retrieves all commands from the database, ordered by execution order."""
@@ -139,7 +183,6 @@ def save_commands(commands):
     conn.commit()
     conn.close()
 
-# --- NEW FUNCTION ---
 def update_command(command_id, text, use_shell, order, background):
     """Updates a single command in the database."""
     conn = get_db_connection()
@@ -153,13 +196,9 @@ def update_command(command_id, text, use_shell, order, background):
     conn.close()
 
 def add_command(text, use_shell, background):
-    """
-    Adds a new command to the database, automatically assigning it the next execution order.
-    """
+    """Adds a new command to the database."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # --- FIX: Automatically determine the next execution order ---
     cursor.execute("SELECT MAX(execution_order) FROM commands")
     max_order = cursor.fetchone()[0]
     new_order = (max_order or 0) + 1
@@ -171,8 +210,6 @@ def add_command(text, use_shell, background):
     conn.commit()
     conn.close()
 
-
-# --- NEW FUNCTION ---
 def delete_command(command_id):
     """Deletes a command from the database by its ID."""
     conn = get_db_connection()
@@ -180,7 +217,6 @@ def delete_command(command_id):
     cursor.execute("DELETE FROM commands WHERE id = ?", (command_id,))
     conn.commit()
     conn.close()
-
 
 def get_setting(key):
     """Retrieves a specific setting value by key."""
@@ -205,7 +241,6 @@ def toggle_theme():
     new_theme = 'light' if current_theme == 'dark' else 'dark'
     set_setting('active_theme', new_theme)
 
-# --- NEW: Functions for Sudo Commands ---
 def get_all_sudo_commands():
     """Retrieves all sudo commands from the database."""
     conn = get_db_connection()
@@ -246,61 +281,51 @@ def get_interesting_keywords():
     cursor.execute("SELECT keyword FROM interesting_keywords")
     return [row[0] for row in cursor.fetchall()]
 
+
+# --- FILESYSTEM TEMPLATE FUNCTIONS (Read Only) ---
+
 def get_all_template_categories():
-    """Retrieves all available vulnerability categories for the report generator."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT category FROM report_templates ORDER BY category")
-    return [row[0] for row in cursor.fetchall()]
+    """Retrieves all available vulnerability categories based on filenames."""
+    ensure_templates_dir()
+    files = [f for f in os.listdir(TEMPLATES_DIR) if f.endswith('.md')]
+    categories = [os.path.splitext(f)[0] for f in files]
+    return sorted(categories)
 
 def get_report_template(category):
-    """Retrieves the template text for a specific vulnerability category."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT template_text FROM report_templates WHERE category = ?", (category,))
-    result = cursor.fetchone()
-    return result[0] if result else ""
+    """
+    Retrieves the formatted markdown content for a specific category.
+    """
+    tpl = get_template_by_category(category)
+    if tpl:
+        return create_markdown_content(tpl['description'], tpl['impact'], tpl['validation_steps'], tpl['fix_recommendation'])
+    return ""
 
 def get_all_templates():
-    conn = get_db_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM report_templates ORDER BY category")
-    return [dict(row) for row in cursor.fetchall()]
+    """Returns a list of template dicts by parsing all MD files."""
+    ensure_templates_dir()
+    templates = []
+    files = [f for f in os.listdir(TEMPLATES_DIR) if f.endswith('.md')]
+    
+    for filename in files:
+        category_name = os.path.splitext(filename)[0]
+        filepath = os.path.join(TEMPLATES_DIR, filename)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            templates.append(parse_markdown_template(category_name, content))
+        except Exception as e:
+            print(f"Error reading template {filename}: {e}")
+            
+    return sorted(templates, key=lambda x: x['category'])
 
 def get_template_by_category(category):
-    """Retrieves a single, structured template."""
-    conn = get_db_connection()
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM report_templates WHERE category = ?", (category,))
-    result = cursor.fetchone()
-    return dict(result) if result else None
-
-def add_template(category, desc, impact, validation, fix):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO report_templates (category, description, impact, validation_steps, fix_recommendation)
-        VALUES (?, ?, ?, ?, ?)
-    """, (category, desc, impact, validation, fix))
-    conn.commit()
-    conn.close()
-
-def update_template(tpl_id, category, desc, impact, validation, fix):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE report_templates SET category=?, description=?, impact=?, validation_steps=?, fix_recommendation=?
-        WHERE id = ?
-    """, (category, desc, impact, validation, fix, tpl_id))
-    conn.commit()
-    conn.close()
-
-def delete_template(template_id):
-    """Deletes a report template by its ID."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM report_templates WHERE id = ?", (template_id,))
-    conn.commit()
-    conn.close()
+    """Retrieves a single, structured template from file."""
+    ensure_templates_dir()
+    safe_filename = "".join([c for c in category if c.isalnum() or c in (' ', '-', '_')]).strip() + ".md"
+    filepath = os.path.join(TEMPLATES_DIR, safe_filename)
+    
+    if os.path.exists(filepath):
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return parse_markdown_template(category, content)
+    return None
