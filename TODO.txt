@@ -3,5 +3,17 @@
 - [x] Review the config database setup
 - [ ] Review requirements.txt
 - [x] Look for a way to save report templates as raw markdown docs instead of db entries  
-- [ ] Correct template preview dialog, images are cropped, stylesheet is not right for dark mode
-- [ ] Correct pdf exporter templates, images are cropped. 
+- [ ] Correct template preview dialog and pdf exporter, images are cropped
+
+ATTACK VECTOR TAB:
+for this main.py i'd like to write the code for the "Attack Vector" tab, this tab will contain a map style where the network computers/servers are represented as individual nodes. there will be 2 kinds of nodes: clients that have a maximum of 3 open ports and servers that have a minimum of 3 open ports. Additionally, each node could have 2 different states: live or dead. The dead ones will be presented with a faded effect while the live hosts wont.
+
+
+once you click on each node a new window splitted into 2 parts will popup, the left side will contain the properties of the selected node telling you information about open ports and services available, while the right part, on a collapsable list will tell you the available attack vectors for the services available(ex. if port 445/tcp is open -> smb service -> attack vector of null session or known CVES such as eternalblue)
+
+
+SOURCES OF INFORMATION:
+
+- Attack vectors: a sqlite3 database that has these columns: service name, ports, attack name, privileges(True for auth False for unauth), dangerous(True/False)
+
+- Network information: another sqlite3 database with these columns: host, ports, live(True/False)

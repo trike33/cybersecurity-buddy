@@ -663,10 +663,12 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.custom_commands import CustomCommandsWidget
         from modules.sudo_terminal import SudoTerminalWidget
         from modules.report_tab import ReportTabWidget
+        from modules.attack_vectors import AttackVectorsWidget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
         client_name = "Target"
+        attack_db_path = os.path.join(os.path.dirname(self.project_db_path), "attack_vectors.db")
         
         if self.project_db_path:
             self.project_data = project_db.load_project_data(self.project_db_path)
@@ -686,13 +688,12 @@ class CyberSecBuddyApp(QMainWindow):
         self.sudo_terminal_tab = SudoTerminalWidget(self.icon_path)
         self.report_tab = ReportTabWidget(db_path=self.project_db_path, project_name=client_name)
         self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path, self.terminal_tab)
+        self.attack_vectors_widget = AttackVectorsWidget(project_folder=os.path.dirname(self.project_db_path), attack_db_path=attack_db_path)
 
         self.enumeration_widget = QLabel("Enumeration Tools")
         self.enumeration_widget.setAlignment(Qt.AlignCenter)
         self.exploiting_widget = QLabel("Exploitation Framework")
         self.exploiting_widget.setAlignment(Qt.AlignCenter)
-        self.attack_vectors_widget = QLabel("Attack Vectors Graph")
-        self.attack_vectors_widget.setAlignment(Qt.AlignCenter)
 
         if self.engagement_type == "Pentest":
             self.setup_pentest_ui()
@@ -854,6 +855,15 @@ class CyberSecBuddyApp(QMainWindow):
         self.playground_tab.set_working_directory(new_path)
         self.terminal_tab.set_working_directory(new_path)
         command_db.set_setting('last_cwd', new_path)
+
+        # --- Add this update ---
+        if hasattr(self, 'attack_vectors_widget'):
+            # Update the folder and force a refresh/re-check of DB
+            self.attack_vectors_widget.db_manager.project_folder = new_path
+            self.attack_vectors_widget.db_manager.network_db_path = os.path.join(new_path, "network_information.db")
+            self.attack_vectors_widget.refresh_view()
+        # -----------------------
+
         if hasattr(self.scan_control_tab, 'on_cwd_changed'):
             self.scan_control_tab.on_cwd_changed(new_path)
 
