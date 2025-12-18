@@ -2,16 +2,22 @@ import os
 import re
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QFileDialog, QMessageBox, QProgressBar, QInputDialog
+    QTextEdit, QFileDialog, QMessageBox, QProgressBar, QInputDialog, QLineEdit
 )
-from PyQt5.QtCore import pyqtSignal, QTimer, Qt
+from PyQt5.QtCore import pyqtSignal, QTimer, Qt, QProcess
 from PyQt5.QtGui import QFont
 
 from utils import db as command_db
 from utils import project_db
 from utils.worker import Worker
-from modules.dialogs import DomainsFileDialog, CommandEditorDialog
 from modules.background_tasks import BackgroundTasksDialog
+
+# --- FIX: Import the dialog ---
+# Assuming modules/dialogs.py exists based on previous context
+try:
+    from modules.dialogs import CommandEditorDialog
+except ImportError:
+    CommandEditorDialog = None
 
 class ScanControlWidget(QWidget):
     """
@@ -36,10 +42,21 @@ class ScanControlWidget(QWidget):
         # Internal state
         self.target_name = ""
         self.scope_file_path = None
+        
+        # Sudo / Naabu state
+        self.sudo_password = None
+        self.naabu_process = QProcess(self)
+        self.naabu_process.readyReadStandardOutput.connect(self.handle_naabu_stdout)
+        self.naabu_process.readyReadStandardError.connect(self.handle_naabu_stderr)
+        self.naabu_process.finished.connect(self.handle_naabu_finished)
 
         # --- Load Info from Project DB if available ---
         if self.project_db_path:
             self.load_project_info()
+        else:
+            possible_scope = os.path.join(self.working_directory, "scope.txt")
+            if os.path.exists(possible_scope):
+                self.scope_file_path = possible_scope
 
         # --- Main Layout ---
         main_layout = QVBoxLayout(self)
@@ -68,10 +85,10 @@ class ScanControlWidget(QWidget):
         self.lbl_target.setStyleSheet(label_style)
         
         scope_text = "[Not Set]"
-        if self.scope_file_path: 
+        if self.scope_file_path and os.path.exists(self.scope_file_path): 
             scope_text = os.path.basename(self.scope_file_path)
         elif self.project_db_path: 
-            scope_text = "Database Scope"
+            scope_text = "Missing scope.txt"
             
         self.lbl_scope = QLabel(f"SCOPE: {scope_text}")
         self.lbl_scope.setStyleSheet(label_style)
@@ -86,15 +103,14 @@ class ScanControlWidget(QWidget):
         main_layout.addLayout(info_layout)
 
         # ---------------------------------------------------------
-        # 2. CONTROL TOOLBAR (Colorized)
+        # 2. CONTROL TOOLBAR
         # ---------------------------------------------------------
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setSpacing(10)
 
-        # Start Button (Green/Teal)
         self.start_button = QPushButton("▶ START SCAN")
         self.start_button.setCursor(Qt.PointingHandCursor)
-        self.start_button.setFixedSize(180, 50)
+        self.start_button.setFixedSize(150, 50)
         self.start_button.setStyleSheet("""
             QPushButton {
                 background-color: #28a745; 
@@ -107,11 +123,10 @@ class ScanControlWidget(QWidget):
         """)
         self.start_button.clicked.connect(self.start_scan)
         
-        # Stop Button (Red)
         self.stop_button = QPushButton("■ STOP SCAN")
         self.stop_button.setEnabled(False)
         self.stop_button.setCursor(Qt.PointingHandCursor)
-        self.stop_button.setFixedSize(180, 50)
+        self.stop_button.setFixedSize(150, 50)
         self.stop_button.setStyleSheet("""
             QPushButton {
                 background-color: #dc3545; 
@@ -124,7 +139,21 @@ class ScanControlWidget(QWidget):
         """)
         self.stop_button.clicked.connect(self.stop_scan)
 
-        # Zoom Buttons (Neutral/Blue)
+        self.naabu_button = QPushButton("⚡ NAABU (SUDO)")
+        self.naabu_button.setCursor(Qt.PointingHandCursor)
+        self.naabu_button.setFixedSize(160, 50)
+        self.naabu_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6f42c1; 
+                color: white; 
+                font-weight: bold; font-size: 14px;
+                border-radius: 6px; border: none;
+            }
+            QPushButton:hover { background-color: #5a32a3; }
+            QPushButton:disabled { background-color: #4a4a5e; color: #888; }
+        """)
+        self.naabu_button.clicked.connect(self.run_naabu_scan)
+
         zoom_style = """
             QPushButton {
                 background-color: #4a4a5e; color: white;
@@ -143,9 +172,9 @@ class ScanControlWidget(QWidget):
         btn_zoom_in.setStyleSheet(zoom_style)
         btn_zoom_in.clicked.connect(lambda: self.zoom_log(1))
 
-        # Add to Layout
         toolbar_layout.addWidget(self.start_button)
         toolbar_layout.addWidget(self.stop_button)
+        toolbar_layout.addWidget(self.naabu_button)
         toolbar_layout.addStretch() 
         toolbar_layout.addWidget(btn_zoom_out)
         toolbar_layout.addWidget(btn_zoom_in)
@@ -197,7 +226,7 @@ class ScanControlWidget(QWidget):
         """)
         main_layout.addWidget(self.output_log)
 
-        # Background Tasks Logic (Invisible)
+        # Background Tasks Logic
         self.bg_tasks_dialog = BackgroundTasksDialog(self)
         self.background_task_started.connect(self.bg_tasks_dialog.add_background_task)
         self.bg_tasks_dialog.task_termination_requested.connect(self.terminate_selected_bg_task)
@@ -205,41 +234,36 @@ class ScanControlWidget(QWidget):
         self.bg_monitor_timer.timeout.connect(self.monitor_background_tasks)
         self.bg_monitor_timer.start(5000)
 
-        # Initial Log Message
         self.update_log("[*] System Ready.")
         if self.project_db_path:
             self.update_log(f"[*] Loaded project database: {os.path.basename(self.project_db_path)}")
         else:
-            self.update_log("[*] Please configure Target, Scope, and CWD from the 'Tools' menu.")
+            self.update_log("[*] Manual Mode (No DB).")
 
-    # --- Configuration Methods (Triggered by Main Menu) ---
+    # --- Methods ---
     
     def load_project_info(self):
-        """Loads Target and Scope from the attached DB."""
         data = project_db.load_project_data(self.project_db_path)
         if data:
             self.target_name = data.get('client_name', '')
-            
-            # Create a temporary scope file from DB domains
-            domains = data.get('domains', [])
-            if domains:
-                scope_path = os.path.join(self.working_directory, "scope.txt")
-                try:
-                    with open(scope_path, "w") as f:
-                        f.write("\n".join(domains))
-                    self.scope_file_path = scope_path
-                except Exception as e:
-                    self.update_log(f"[!] Error writing scope file: {e}")
+            scope_path = os.path.join(self.working_directory, "scope.txt")
+            if os.path.exists(scope_path):
+                self.scope_file_path = scope_path
+            else:
+                self.scope_file_path = None
+                self.update_log("[!] scope.txt not found in project folder.")
 
     def open_command_editor(self):
-        dialog = CommandEditorDialog(self)
-        dialog.exec_()
+        # FIX: Check if class was imported successfully
+        if CommandEditorDialog:
+            dialog = CommandEditorDialog(self)
+            dialog.exec_()
+        else:
+            QMessageBox.warning(self, "Missing Component", "The Command Editor dialog could not be loaded.")
 
     def show_background_tasks(self):
         self.bg_tasks_dialog.setStyleSheet(self.window().styleSheet())
         self.bg_tasks_dialog.show()
-
-    # --- Internal UI Logic ---
 
     def toggle_theme(self):
         command_db.toggle_theme()
@@ -270,14 +294,76 @@ class ScanControlWidget(QWidget):
         minutes, seconds = divmod(rem, 60)
         self.timer_label.setText(f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}")
 
-    # --- Execution Logic ---
+    # --- Naabu Sudo Scan Logic ---
+
+    def prompt_for_sudo_password(self):
+        if not self.sudo_password:
+            text, ok = QInputDialog.getText(
+                self, "Sudo Required", "Enter sudo password for Naabu scan:", QLineEdit.Password
+            )
+            if ok and text:
+                self.sudo_password = text
+                return True
+            return False
+        return True
+
+    def run_naabu_scan(self):
+        if not self.scope_file_path or not os.path.exists(self.scope_file_path):
+            QMessageBox.warning(self, "Missing Scope", "No scope.txt file found. Please configure the project.")
+            return
+
+        if self.naabu_process.state() == QProcess.Running:
+            QMessageBox.warning(self, "Busy", "A scan is already running.")
+            return
+
+        if not self.prompt_for_sudo_password():
+            self.update_log("[!] Scan aborted: Sudo password required.")
+            return
+
+        output_file = os.path.join(self.working_directory, "naabu_out")
+        
+        program = "sudo"
+        args = ["-S", "naabu", "-list", self.scope_file_path, "-o", output_file]
+        
+        cmd_display = f"sudo naabu -list {os.path.basename(self.scope_file_path)} -o naabu_out"
+        self.update_log(f"<br><span style='color: #6f42c1;'><b>[⚡] Starting Naabu Scan (Sudo)</b></span>")
+        self.update_log(f"Command: {cmd_display}")
+
+        self.naabu_process.start(program, args)
+        
+        if self.naabu_process.waitForStarted():
+            self.naabu_process.write((self.sudo_password + "\n").encode())
+            self.naabu_button.setEnabled(False)
+            self.start_button.setEnabled(False) 
+            self.stop_button.setEnabled(True) 
+        else:
+            self.update_log(f"[!] Failed to start Naabu: {self.naabu_process.errorString()}")
+
+    def handle_naabu_stdout(self):
+        data = self.naabu_process.readAllStandardOutput().data().decode(errors='ignore').strip()
+        if data:
+            self.update_log(data)
+
+    def handle_naabu_stderr(self):
+        data = self.naabu_process.readAllStandardError().data().decode(errors='ignore').strip()
+        if data and "[sudo]" not in data:
+            self.update_log(f"<span style='color:orange;'>{data}</span>")
+
+    def handle_naabu_finished(self):
+        self.naabu_button.setEnabled(True)
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.update_log(f"<br><span style='color: #28a745;'><b>[✔] Naabu scan finished.</b></span>")
+        self.scan_updated.emit()
+
+    # --- Standard Execution Logic ---
 
     def start_scan(self):
         if not self.target_name:
-            QMessageBox.warning(self, "Input Error", "Target Name is not set. Please set it via Tools > Set Target Name.")
+            QMessageBox.warning(self, "Input Error", "Target Name is not set. Please use 'Project Settings'.")
             return
         if not self.scope_file_path:
-            QMessageBox.warning(self, "Input Error", "Scope File is not selected. Please set it via Tools > Browse Scope File.")
+            QMessageBox.warning(self, "Input Error", "Scope File (scope.txt) not found. Please create it via 'Project Settings'.")
             return
 
         self.output_log.clear()
@@ -309,6 +395,9 @@ class ScanControlWidget(QWidget):
     def stop_scan(self):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
+        if self.naabu_process.state() == QProcess.Running:
+            self.naabu_process.terminate()
+            self.update_log("[!] Terminating Naabu scan...")
         self.scan_timer.stop()
 
     def update_log(self, message):

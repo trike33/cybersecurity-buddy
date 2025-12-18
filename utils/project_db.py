@@ -1,7 +1,8 @@
 import sqlite3
 import os
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QMessageBox
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, 
+                             QMessageBox, QLineEdit, QDateEdit, QHBoxLayout, QFormLayout)
+from PyQt5.QtCore import Qt, QDate
 
 def initialize_project_db(folder_path, db_filename="project_data.db"):
     """Creates the SQLite DB and tables in the specified folder."""
@@ -61,6 +62,46 @@ def save_project_details(db_path, client, eng_type, deadline, domain_list):
     conn.commit()
     conn.close()
 
+def update_project_metadata(db_path, client_name, deadline):
+    """Updates the client name and deadline in the database."""
+    if not os.path.exists(db_path): return False
+    try:
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("""
+            UPDATE project_info 
+            SET client_name = ?, deadline = ? 
+            WHERE id = (SELECT MAX(id) FROM project_info)
+        """, (client_name, deadline))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error updating metadata: {e}")
+        return False
+
+def update_project_domains(db_path, domains_text):
+    """Updates the domains table to match the new list."""
+    if not os.path.exists(db_path): return False
+    try:
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        
+        # 1. Clear existing domains
+        c.execute("DELETE FROM domains")
+        
+        # 2. Insert new domains
+        domain_list = [d.strip() for d in domains_text.splitlines() if d.strip()]
+        for d in domain_list:
+            c.execute("INSERT INTO domains (domain) VALUES (?)", (d,))
+            
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error updating domains: {e}")
+        return False
+
 def load_project_data(db_path):
     """Reads project info to populate the UI."""
     data = {}
@@ -99,92 +140,139 @@ def is_valid_project_db(db_path):
         return result is not None
     except:
         return False
-    
-def show_project_info_dialog(parent, db_path):
+
+# ---------------------------------------------------------
+# EDITOR DIALOG
+# ---------------------------------------------------------
+class ProjectEditDialog(QDialog):
     """
-    Displays a modal dialog with project details, domains, and scope.
-    Reads metadata from DB and full lists from text files.
+    Dialog to view and EDIT project information.
+    Modifies DB for metadata and Text Files for content.
     """
-    if not db_path or not os.path.exists(db_path):
-        QMessageBox.warning(parent, "Error", "No valid project database found.")
-        return
+    def __init__(self, parent, db_path):
+        super().__init__(parent)
+        self.db_path = db_path
+        self.project_dir = os.path.dirname(db_path)
+        self.setWindowTitle("Edit Project Settings")
+        self.resize(700, 800)
+        self.setStyleSheet("""
+            QDialog { background-color: #1e1e2f; color: white; }
+            QLabel { font-size: 14px; color: #e0e0e0; font-weight: bold; }
+            QLineEdit, QDateEdit, QTextEdit { 
+                background-color: #2f2f40; color: #00d2ff; 
+                border: 1px solid #4a4a5e; border-radius: 4px; padding: 6px;
+                font-family: monospace; font-size: 13px;
+            }
+            QLineEdit:focus, QTextEdit:focus { border: 1px solid #00d2ff; }
+            QPushButton { 
+                background-color: #3e3e50; color: white; 
+                padding: 10px; border-radius: 5px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #4e4e60; border: 1px solid #00d2ff; }
+            QPushButton#SaveBtn { background-color: #28a745; color: white; border: none; }
+            QPushButton#SaveBtn:hover { background-color: #218838; }
+        """)
 
-    # 1. Load Metadata from DB
-    data = load_project_data(db_path) # Calls the function existing in this file
-    if not data:
-        QMessageBox.warning(parent, "Error", "Could not load project data.")
-        return
+        self.init_ui()
+        self.load_data()
 
-    project_dir = os.path.dirname(db_path)
-    client = data.get('client_name', 'Unknown')
-    eng_type = data.get('engagement_type', 'Unknown')
-    deadline = data.get('deadline', 'Unknown')
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        
+        # 1. METADATA SECTION
+        meta_layout = QFormLayout()
+        meta_layout.setSpacing(10)
+        
+        self.inp_client = QLineEdit()
+        self.inp_deadline = QDateEdit()
+        self.inp_deadline.setCalendarPopup(True)
+        self.inp_deadline.setDisplayFormat("yyyy-MM-dd")
+        
+        meta_layout.addRow("Client Name:", self.inp_client)
+        meta_layout.addRow("Deadline:", self.inp_deadline)
+        
+        layout.addLayout(meta_layout)
+        
+        # 2. FILES SECTION
+        # Domains
+        layout.addWidget(QLabel("Target Domains (domains.txt):"))
+        self.txt_domains = QTextEdit()
+        layout.addWidget(self.txt_domains)
+        
+        # Scope
+        layout.addWidget(QLabel("Scope / IP Ranges (scope.txt):"))
+        self.txt_scope = QTextEdit()
+        layout.addWidget(self.txt_scope)
+        
+        # 3. BUTTONS
+        btn_layout = QHBoxLayout()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_save = QPushButton("Save Changes")
+        btn_save.setObjectName("SaveBtn")
+        btn_save.clicked.connect(self.save_changes)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_save)
+        
+        layout.addLayout(btn_layout)
 
-    # 2. Read Text Files (Domains & Scope)
-    # We prefer the text files over the DB for the "View" because they might be manually edited
-    domains_text = "No domains.txt found."
-    scope_text = "No scope.txt found."
+    def load_data(self):
+        # Load DB Metadata
+        data = load_project_data(self.db_path)
+        if data:
+            self.inp_client.setText(data.get('client_name', ''))
+            deadline_str = data.get('deadline', '')
+            if deadline_str:
+                self.inp_deadline.setDate(QDate.fromString(deadline_str, "yyyy-MM-dd"))
+            else:
+                self.inp_deadline.setDate(QDate.currentDate())
 
-    dom_file = os.path.join(project_dir, "domains.txt")
-    if os.path.exists(dom_file):
-        with open(dom_file, 'r', encoding='utf-8') as f:
-            domains_text = f.read()
+        # Load Text Files
+        dom_file = os.path.join(self.project_dir, "domains.txt")
+        if os.path.exists(dom_file):
+            with open(dom_file, 'r', encoding='utf-8') as f:
+                self.txt_domains.setPlainText(f.read())
+        
+        scope_file = os.path.join(self.project_dir, "scope.txt")
+        if os.path.exists(scope_file):
+            with open(scope_file, 'r', encoding='utf-8') as f:
+                self.txt_scope.setPlainText(f.read())
 
-    scope_file = os.path.join(project_dir, "scope.txt")
-    if os.path.exists(scope_file):
-        with open(scope_file, 'r', encoding='utf-8') as f:
-            scope_text = f.read()
+    def save_changes(self):
+        # 1. Update DB Metadata
+        new_client = self.inp_client.text().strip()
+        new_deadline = self.inp_deadline.date().toString("yyyy-MM-dd")
+        
+        if not new_client:
+            QMessageBox.warning(self, "Error", "Client Name cannot be empty.")
+            return
 
-    # 3. Build UI
-    dlg = QDialog(parent)
-    dlg.setWindowTitle(f"Project Info: {client}")
-    dlg.resize(600, 700)
-    dlg.setStyleSheet("background-color: #1e1e2f; color: white;")
+        success_meta = update_project_metadata(self.db_path, new_client, new_deadline)
+        
+        # 2. Update DB Domains (Sync DB with Text)
+        success_domains = update_project_domains(self.db_path, self.txt_domains.toPlainText())
 
-    layout = QVBoxLayout(dlg)
-    layout.setSpacing(15)
+        if not success_meta:
+            QMessageBox.critical(self, "Error", "Failed to update database metadata.")
+            return
 
-    # Header Style
-    lbl_style = "font-size: 16px; font-weight: bold; color: #00d2ff;"
-    txt_style = "background-color: #2f2f40; color: #ccc; border: 1px solid #4a4a5e; font-family: monospace;"
+        # 3. Update Files
+        try:
+            dom_file = os.path.join(self.project_dir, "domains.txt")
+            with open(dom_file, 'w', encoding='utf-8') as f:
+                f.write(self.txt_domains.toPlainText())
+            
+            scope_file = os.path.join(self.project_dir, "scope.txt")
+            with open(scope_file, 'w', encoding='utf-8') as f:
+                f.write(self.txt_scope.toPlainText())
+                
+        except Exception as e:
+            QMessageBox.critical(self, "File Error", f"Failed to write files: {str(e)}")
+            return
 
-    # Info Block
-    info_lbl = QLabel(f"""
-    <html>
-    <body>
-        <p><span style="color:#00d2ff;">Client:</span> {client}</p>
-        <p><span style="color:#00d2ff;">Type:</span> {eng_type}</p>
-        <p><span style="color:#00d2ff;">Deadline:</span> {deadline}</p>
-        <p><span style="color:#888;">Path: {project_dir}</span></p>
-    </body>
-    </html>
-    """)
-    info_lbl.setTextFormat(Qt.RichText)
-    layout.addWidget(info_lbl)
-
-    # Domains Box
-    layout.addWidget(QLabel("Target Domains:", styleSheet=lbl_style))
-    txt_dom = QTextEdit()
-    txt_dom.setPlainText(domains_text)
-    txt_dom.setReadOnly(True)
-    txt_dom.setStyleSheet(txt_style)
-    layout.addWidget(txt_dom)
-
-    # Scope Box
-    layout.addWidget(QLabel("Scope / IP Ranges:", styleSheet=lbl_style))
-    txt_scope = QTextEdit()
-    txt_scope.setPlainText(scope_text)
-    txt_scope.setReadOnly(True)
-    txt_scope.setStyleSheet(txt_style)
-    layout.addWidget(txt_scope)
-
-    # Close Button
-    btn_close = QPushButton("Close")
-    btn_close.setStyleSheet("""
-        QPushButton { background-color: #00d2ff; color: #1e1e2f; font-weight: bold; padding: 10px; border-radius: 5px; }
-        QPushButton:hover { background-color: #3a7bd5; }
-    """)
-    btn_close.clicked.connect(dlg.accept)
-    layout.addWidget(btn_close)
-
-    dlg.exec_()
+        QMessageBox.information(self, "Success", "Project information updated successfully.")
+        self.accept()

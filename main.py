@@ -50,170 +50,85 @@ class StartupWizard(QDialog):
 
         # --- RANDOM WALLPAPER LOGIC ---
         base_path = os.path.dirname(os.path.abspath(__file__))
-        
-        # We will look for images inside 'resources/img/wallpapers'
         wallpaper_dir = os.path.join(base_path, "themes", "img")
-        
         selected_wallpaper = None
         
         if os.path.exists(wallpaper_dir):
-            # Get all valid image files
             images = [f for f in os.listdir(wallpaper_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             if images:
                 selected_wallpaper = os.path.join(wallpaper_dir, random.choice(images))
         
-        # Fallback: check for a default single image if folder is empty or missing
         if not selected_wallpaper:
             default_bg = os.path.join(base_path, "themes", "img", "wizard_bg.jpeg")
             if os.path.exists(default_bg):
                 selected_wallpaper = default_bg
 
-        # Apply the background if we found something
         if selected_wallpaper:
             self.bg_label = QLabel(self)
             self.bg_label.setGeometry(0, 0, 1200, 900)
             self.bg_label.setPixmap(QPixmap(selected_wallpaper))
             self.bg_label.setScaledContents(True)
-            
-            # CSS Opacity Trick:
-            # Note: This opacity style might not affect the QPixmap on some systems.
-            # If the image is too bright, it's better to darken the images themselves in Photoshop/GIMP.
             self.bg_label.setStyleSheet("opacity: 0.2;") 
-            
-            self.bg_label.lower() # Send to back
+            self.bg_label.lower()
         
         self.project_db_path = None
-        self.engagement_type = "Pentest" # Default
+        self.engagement_type = "Pentest"
         self.base_width = 1200
 
-        # Main Layout
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-
-        # Container for the sliding pages
         self.container = QWidget(self)
         self.layout.addWidget(self.container)
 
-        # -------------------------------------------------
-        # PAGE 1: WELCOME
-        # -------------------------------------------------
         self.page_welcome = QFrame(self.container)
         self.page_welcome.setGeometry(0, 0, self.base_width, 900)
         self.setup_welcome_ui()
 
-        # -------------------------------------------------
-        # PAGE 2: SELECTION (Create vs Load)
-        # -------------------------------------------------
         self.page_selection = QFrame(self.container)
         self.page_selection.setGeometry(self.base_width, 0, self.base_width, 900)
         self.setup_selection_ui()
 
-        # -------------------------------------------------
-        # PAGE 3: CREATE PROJECT FORM (Now with Scope!)
-        # -------------------------------------------------
         self.page_create = QFrame(self.container)
         self.page_create.setGeometry(self.base_width, 0, self.base_width, 900)
         self.setup_create_ui()
 
-        # -------------------------------------------------
-        # PAGE 4: LOAD PROJECT LIST
-        # -------------------------------------------------
         self.page_load = QFrame(self.container)
         self.page_load.setGeometry(self.base_width, 0, self.base_width, 900)
         self.setup_load_ui()
 
-        # Stack management for sliding
         self.current_page = self.page_welcome
         self.history = [] 
 
-        # -------------------------------------------------
-        # GLOBAL STYLES (Vibrant Blue Theme)
-        # -------------------------------------------------
         self.setStyleSheet("""
-            QDialog { 
-                background-color: #1e1e2f; 
-                color: #ffffff; 
-            }
-            QLabel { 
-                color: #e0e0e0; font-family: 'Arial';
-            }
-            /* Inputs */
+            QDialog { background-color: #1e1e2f; color: #ffffff; }
+            QLabel { color: #e0e0e0; font-family: 'Arial'; }
             QLineEdit, QComboBox, QDateEdit, QListWidget, QTextEdit {
-                background-color: #2f2f40;
-                color: #00d2ff;
-                border: 2px solid #4a4a5e;
-                border-radius: 8px;
-                padding: 10px;
+                background-color: #2f2f40; color: #00d2ff;
+                border: 2px solid #4a4a5e; border-radius: 8px; padding: 10px;
                 font-size: 16px;
-                selection-background-color: #00d2ff;
-                selection-color: #1e1e2f;
             }
             QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QListWidget:focus, QTextEdit:focus {
                 border: 2px solid #00d2ff;
             }
-            
-            /* Buttons */
             QPushButton {
-                background-color: #2f2f40;
-                color: white;
-                border: 1px solid #4a4a5e;
-                padding: 15px;
-                border-radius: 8px;
-                font-size: 16px;
+                background-color: #2f2f40; color: white;
+                border: 1px solid #4a4a5e; padding: 15px; border-radius: 8px; font-size: 16px;
             }
-            QPushButton:hover { 
-                background-color: #3e3e50; 
-                border-color: #00d2ff;
-                color: #00d2ff;
-            }
-            
-            /* Primary Action Button (Gradient Blue) */
+            QPushButton:hover { background-color: #3e3e50; border-color: #00d2ff; color: #00d2ff; }
             QPushButton#ActionBtn {
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00d2ff, stop:1 #3a7bd5);
-                border: none;
-                border-radius: 30px;
-                font-size: 22px;
-                font-weight: bold;
-                color: white;
+                border: none; border-radius: 30px; font-size: 22px; font-weight: bold; color: white;
             }
             QPushButton#ActionBtn:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3a7bd5, stop:1 #00d2ff);
             }
-
-            /* Back Button */
-            QPushButton#BackBtn {
-                background-color: transparent;
-                border: none;
-                color: #8888aa;
-                font-size: 18px;
-                font-weight: bold;
-            }
+            QPushButton#BackBtn { background-color: transparent; border: none; color: #8888aa; font-size: 18px; font-weight: bold; }
             QPushButton#BackBtn:hover { color: #00d2ff; }
-
-            /* Project Choice Buttons */
-            QPushButton#ProjectBtn {
-                font-size: 20px;
-                font-weight: bold;
-                padding: 30px;
-                border: 2px solid #4a4a5e;
-            }
-            QPushButton#ProjectBtn:hover {
-                border: 2px solid #00d2ff;
-                background-color: #252535;
-            }
-            /* Make inner frames transparent so background shows through */
-            QFrame {
-                background-color: transparent; 
-                border: none;
-            }
-
-            QDialog { 
-                background-color: #1e1e2f; /* Keep dark base color behind the image */
-                color: #ffffff; 
-            }
+            QPushButton#ProjectBtn { font-size: 20px; font-weight: bold; padding: 30px; border: 2px solid #4a4a5e; }
+            QPushButton#ProjectBtn:hover { border: 2px solid #00d2ff; background-color: #252535; }
+            QFrame { background-color: transparent; border: none; }
+            QDialog { background-color: #1e1e2f; color: #ffffff; }
         """)
-
-    # --- UI SETUPS ---
 
     def setup_welcome_ui(self):
         layout = QVBoxLayout(self.page_welcome)
@@ -249,7 +164,6 @@ class StartupWizard(QDialog):
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(40)
 
-        # Top Bar
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(40, 40, 40, 0)
         btn_back = QPushButton("← Back")
@@ -262,7 +176,6 @@ class StartupWizard(QDialog):
         layout.addLayout(top_bar)
         
         layout.addStretch()
-
         lbl_select = QLabel("Initialize Engagement")
         lbl_select.setFont(QFont("Arial", 28, QFont.Bold))
         lbl_select.setStyleSheet("margin-bottom: 30px; color: #ffffff;")
@@ -272,14 +185,12 @@ class StartupWizard(QDialog):
         btn_layout.setSpacing(40)
         btn_layout.setAlignment(Qt.AlignCenter)
 
-        # Create New
         btn_new = QPushButton("Create New Project")
         btn_new.setObjectName("ProjectBtn")
         btn_new.setFixedSize(300, 200)
         btn_new.setCursor(Qt.PointingHandCursor)
         btn_new.clicked.connect(self.start_new_project)
 
-        # Load Existing
         btn_load = QPushButton("Load Existing Project")
         btn_load.setObjectName("ProjectBtn")
         btn_load.setFixedSize(300, 200)
@@ -288,21 +199,17 @@ class StartupWizard(QDialog):
 
         btn_layout.addWidget(btn_new)
         btn_layout.addWidget(btn_load)
-        
         layout.addLayout(btn_layout)
         layout.addStretch()
         layout.addStretch()
 
     def setup_create_ui(self):
-        # Initialize state variables for the files
         self.domain_mode = None 
         self.domain_data = ""
         self.scope_mode = None
         self.scope_data = ""
 
         layout = QVBoxLayout(self.page_create)
-        
-        # Top Bar
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(40, 40, 40, 0)
         btn_back = QPushButton("← Back")
@@ -314,7 +221,6 @@ class StartupWizard(QDialog):
         top_bar.addStretch()
         layout.addLayout(top_bar)
 
-        # Form Layout Container
         form_widget = QWidget()
         form_layout = QVBoxLayout(form_widget)
         form_layout.setSpacing(10)
@@ -324,7 +230,6 @@ class StartupWizard(QDialog):
         lbl_title.setFont(QFont("Arial", 28, QFont.Bold))
         lbl_title.setStyleSheet("color: #00d2ff; margin-bottom: 10px;")
         
-        # --- Standard Inputs ---
         self.inp_client = QLineEdit()
         self.inp_client.setPlaceholderText("Client Name (e.g. Acme Corp)")
         
@@ -336,73 +241,56 @@ class StartupWizard(QDialog):
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("yyyy-MM-dd")
 
-        # --- Domains Section ---
         lbl_dom = QLabel("Target Domains:")
         h_dom = QHBoxLayout()
         self.inp_domains_display = QLineEdit()
         self.inp_domains_display.setPlaceholderText("Select file or Create...")
         self.inp_domains_display.setReadOnly(True)
-        
         btn_dom_browse = QPushButton("Browse")
         btn_dom_browse.setFixedWidth(100)
         btn_dom_browse.clicked.connect(self.browse_domains)
-        
         btn_dom_create = QPushButton("Edit/Create")
         btn_dom_create.setFixedWidth(140)
         btn_dom_create.clicked.connect(self.create_domains)
-        
         h_dom.addWidget(self.inp_domains_display)
         h_dom.addWidget(btn_dom_browse)
         h_dom.addWidget(btn_dom_create)
 
-        # --- Scope Section ---
         lbl_scope = QLabel("Scope / IP Ranges:")
         h_scope = QHBoxLayout()
         self.inp_scope_display = QLineEdit()
         self.inp_scope_display.setPlaceholderText("Select file or Create...")
         self.inp_scope_display.setReadOnly(True)
-        
         btn_scope_browse = QPushButton("Browse")
         btn_scope_browse.setFixedWidth(100)
         btn_scope_browse.clicked.connect(self.browse_scope)
-        
         btn_scope_create = QPushButton("Edit/Create")
         btn_scope_create.setFixedWidth(140)
         btn_scope_create.clicked.connect(self.create_scope)
-        
         h_scope.addWidget(self.inp_scope_display)
         h_scope.addWidget(btn_scope_browse)
         h_scope.addWidget(btn_scope_create)
 
-        # --- Create Button ---
         btn_create = QPushButton("Create & Launch")
         btn_create.setObjectName("ActionBtn")
         btn_create.setFixedSize(300, 60)
         btn_create.setCursor(Qt.PointingHandCursor)
         btn_create.clicked.connect(self.finalize_create_project)
 
-        # Add widgets to layout
         form_layout.addWidget(lbl_title, alignment=Qt.AlignCenter)
-        
         form_layout.addWidget(QLabel("Client Name:"))
         form_layout.addWidget(self.inp_client)
-        
         form_layout.addWidget(QLabel("Engagement Type:"))
         form_layout.addWidget(self.combo_type)
-        
         form_layout.addWidget(QLabel("Deadline:"))
         form_layout.addWidget(self.date_edit)
-        
         form_layout.addWidget(lbl_dom)
         form_layout.addLayout(h_dom)
-        
         form_layout.addWidget(lbl_scope)
         form_layout.addLayout(h_scope)
-        
         form_layout.addSpacing(20)
         form_layout.addWidget(btn_create, alignment=Qt.AlignCenter)
 
-        # Center the form
         layout.addStretch()
         layout.addWidget(form_widget, alignment=Qt.AlignCenter)
         layout.addStretch()
@@ -412,14 +300,11 @@ class StartupWizard(QDialog):
         self.domain_data = ""
         self.scope_mode = None
         self.scope_data = ""
-
         self.inp_domains_display.clear()
         self.inp_scope_display.clear()
 
     def setup_load_ui(self):
         layout = QVBoxLayout(self.page_load)
-        
-        # Top Bar
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(40, 40, 40, 0)
         btn_back = QPushButton("← Back")
@@ -431,7 +316,6 @@ class StartupWizard(QDialog):
         top_bar.addStretch()
         layout.addLayout(top_bar)
 
-        # Content
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(150, 0, 150, 0)
         content_layout.setSpacing(20)
@@ -443,21 +327,15 @@ class StartupWizard(QDialog):
         lbl_path = QLabel(f"Scanning: {os.getcwd()}")
         lbl_path.setStyleSheet("color: #8888aa; font-style: italic;")
 
-        # DB List
         self.db_list_widget = QListWidget()
         self.db_list_widget.setCursor(Qt.PointingHandCursor)
         self.db_list_widget.itemDoubleClicked.connect(self.finalize_load_project)
 
-        # Browse Button (Always at bottom)
         btn_browse = QPushButton("📂 Navigate Filesystem...")
         btn_browse.setCursor(Qt.PointingHandCursor)
         btn_browse.setStyleSheet("""
-            QPushButton {
-                background-color: #2f2f40; border: 2px dashed #4a4a5e; color: #888;
-            }
-            QPushButton:hover {
-                border: 2px dashed #00d2ff; color: #00d2ff;
-            }
+            QPushButton { background-color: #2f2f40; border: 2px dashed #4a4a5e; color: #888; }
+            QPushButton:hover { border: 2px dashed #00d2ff; color: #00d2ff; }
         """)
         btn_browse.clicked.connect(self.browse_for_db)
 
@@ -471,23 +349,19 @@ class StartupWizard(QDialog):
         layout.addStretch()
 
     # --- LOGIC & ANIMATIONS ---
-
     def slide_to_page(self, target_page):
         target_page.move(self.base_width, 0)
         self.history.append(self.current_page)
-        
         self.anim_out = QPropertyAnimation(self.current_page, b"pos")
         self.anim_out.setDuration(400)
         self.anim_out.setStartValue(QPoint(0, 0))
         self.anim_out.setEndValue(QPoint(-self.base_width, 0))
         self.anim_out.setEasingCurve(QEasingCurve.InOutQuart)
-        
         self.anim_in = QPropertyAnimation(target_page, b"pos")
         self.anim_in.setDuration(400)
         self.anim_in.setStartValue(QPoint(self.base_width, 0))
         self.anim_in.setEndValue(QPoint(0, 0))
         self.anim_in.setEasingCurve(QEasingCurve.InOutQuart)
-        
         self.anim_out.start()
         self.anim_in.start()
         self.current_page = target_page
@@ -495,21 +369,17 @@ class StartupWizard(QDialog):
     def slide_back(self):
         if not self.history: return
         prev_page = self.history.pop()
-        
         prev_page.move(-self.base_width, 0)
-
         self.anim_out = QPropertyAnimation(self.current_page, b"pos")
         self.anim_out.setDuration(400)
         self.anim_out.setStartValue(QPoint(0, 0))
         self.anim_out.setEndValue(QPoint(self.base_width, 0))
         self.anim_out.setEasingCurve(QEasingCurve.InOutQuart)
-
         self.anim_in = QPropertyAnimation(prev_page, b"pos")
         self.anim_in.setDuration(400)
         self.anim_in.setStartValue(QPoint(-self.base_width, 0))
         self.anim_in.setEndValue(QPoint(0, 0))
         self.anim_in.setEasingCurve(QEasingCurve.InOutQuart)
-
         self.anim_out.start()
         self.anim_in.start()
         self.current_page = prev_page
@@ -518,7 +388,6 @@ class StartupWizard(QDialog):
     def prepare_and_slide_to_load(self):
         self.db_list_widget.clear()
         valid_files = glob.glob("project_data.db") + glob.glob("*/project_data.db")
-        
         if not valid_files:
             item = "No project databases found in current folder."
             self.db_list_widget.addItem(item)
@@ -526,7 +395,6 @@ class StartupWizard(QDialog):
         else:
             for f in valid_files:
                 self.db_list_widget.addItem(f)
-        
         self.slide_to_page(self.page_load)
 
     def finalize_load_project(self, item):
@@ -594,7 +462,6 @@ class StartupWizard(QDialog):
             QMessageBox.warning(self, "Missing Info", "Client Name is required.")
             return
 
-        # 1. Create Folder
         root_path = os.getcwd()
         folder_name = f"{client.replace(' ', '_')}_Engagement"
         full_project_path = os.path.join(root_path, folder_name)
@@ -606,13 +473,11 @@ class StartupWizard(QDialog):
                 QMessageBox.critical(self, "Error", f"Could not create directory: {e}")
                 return
 
-        # 2. Handle Domains File (Writes self.domain_data)
-        print(f"{self.domain_data} {self.domain_mode}")
         final_domains_path = os.path.join(full_project_path, "domains.txt")
         try:
             if self.domain_mode == 'content':
                 with open(final_domains_path, 'w', encoding='utf-8') as f:
-                    f.write(self.domain_data) # <--- Writes Domains
+                    f.write(self.domain_data)
             elif self.domain_mode == 'file' and os.path.exists(self.domain_data):
                 shutil.copy(self.domain_data, final_domains_path)
             else:
@@ -620,13 +485,11 @@ class StartupWizard(QDialog):
         except Exception as e:
             print(f"Error saving domains: {e}")
 
-        # 3. Handle Scope File (Writes self.scope_data)
-        print(f"{self.scope_data} {self.scope_mode}")
         final_scope_path = os.path.join(full_project_path, "scope.txt")
         try:
             if self.scope_mode == 'content':
                 with open(final_scope_path, 'w', encoding='utf-8') as f:
-                    f.write(self.scope_data) # <--- STRICTLY writes Scope
+                    f.write(self.scope_data)
             elif self.scope_mode == 'file' and os.path.exists(self.scope_data):
                 shutil.copy(self.scope_data, final_scope_path)
             else:
@@ -634,28 +497,23 @@ class StartupWizard(QDialog):
         except Exception as e:
             print(f"Error saving scope: {e}")
 
-        # 4. Init DB and Save Details
         self.project_db_path = project_db.initialize_project_db(full_project_path)
         
-        # Read back domains for the DB record
         domain_list = []
         if os.path.exists(final_domains_path):
             with open(final_domains_path, 'r') as f:
                 domain_list = [l.strip() for l in f if l.strip()]
 
-        print(f"{self.domain_data} {self.domain_mode}")
-        print(f"{self.scope_data} {self.scope_mode}")
         project_db.save_project_details(self.project_db_path, client, eng_type, deadline, domain_list)
-        
         self.engagement_type = eng_type
         self.accept()
+
 # ---------------------------------------------------------
 # 2. MAIN APPLICATION 
 # ---------------------------------------------------------
 class CyberSecBuddyApp(QMainWindow):
     def __init__(self, engagement_type="Pentest", project_db_path=None):
         super().__init__()
-        # FIX: Initialize this immediately to prevent AttributeErrors on crash/exit
         self.restart_requested = False
         
         from modules.scan_control import ScanControlWidget
@@ -664,16 +522,19 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.sudo_terminal import SudoTerminalWidget
         from modules.report_tab import ReportTabWidget
         from modules.attack_vectors import AttackVectorsWidget
+        from modules.enumeration import EnumerationWidget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
+        
+        # Guard clause for new projects to ensure path handling
+        attack_db_path = None
         client_name = "Target"
-        attack_db_path = os.path.join(os.path.dirname(self.project_db_path), "attack_vectors.db")
         
         if self.project_db_path:
             self.project_data = project_db.load_project_data(self.project_db_path)
-            client = self.project_data.get('client_name', 'Unknown')
-            self.setWindowTitle(f"Cybersecurity Buddy - {client} [{self.engagement_type}]")
+            client_name = self.project_data.get('client_name', 'Unknown')
+            self.setWindowTitle(f"Cybersecurity Buddy - {client_name} [{self.engagement_type}]")
             self.working_directory = os.path.dirname(self.project_db_path)
         else:
             self.setWindowTitle(f"Cybersecurity Buddy - [{self.engagement_type}]")
@@ -688,7 +549,10 @@ class CyberSecBuddyApp(QMainWindow):
         self.sudo_terminal_tab = SudoTerminalWidget(self.icon_path)
         self.report_tab = ReportTabWidget(db_path=self.project_db_path, project_name=client_name)
         self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path, self.terminal_tab)
-        self.attack_vectors_widget = AttackVectorsWidget(project_folder=os.path.dirname(self.project_db_path), attack_db_path=attack_db_path)
+        
+        project_folder = os.path.dirname(self.project_db_path) if self.project_db_path else self.working_directory
+        self.attack_vectors_widget = AttackVectorsWidget(project_folder=project_folder, attack_db_path=attack_db_path)
+        self.enumeration_tab = EnumerationWidget(self.working_directory)
 
         self.enumeration_widget = QLabel("Enumeration Tools")
         self.enumeration_widget.setAlignment(Qt.AlignCenter)
@@ -725,9 +589,9 @@ class CyberSecBuddyApp(QMainWindow):
                
         tools_menu.addSeparator()
 
-        action_info = QAction("Project Information", self)
-        action_info.triggered.connect(lambda: project_db.show_project_info_dialog(self, self.project_db_path))
-        tools_menu.addAction(action_info)
+        action_settings = QAction("Project Settings", self)
+        action_settings.triggered.connect(self.open_project_settings)
+        tools_menu.addAction(action_settings)
 
         action_commands = QAction("Manage Commands...", self)
         action_commands.triggered.connect(self.scan_control_tab.open_command_editor)
@@ -755,6 +619,28 @@ class CyberSecBuddyApp(QMainWindow):
         action_light = QAction("Light Mode", self)
         action_light.triggered.connect(lambda: self.change_theme_setting("light"))
         theme_menu.addAction(action_light)
+
+    def open_project_settings(self):
+        """Opens the ProjectEditDialog and updates UI on save."""
+        if not self.project_db_path:
+            QMessageBox.warning(self, "No Project", "No active project loaded.")
+            return
+
+        dlg = project_db.ProjectEditDialog(self, self.project_db_path)
+        if dlg.exec_() == QDialog.Accepted:
+            # Refresh Title
+            data = project_db.load_project_data(self.project_db_path)
+            if data:
+                client = data.get('client_name', 'Unknown')
+                self.setWindowTitle(f"Cybersecurity Buddy - {client} [{self.engagement_type}]")
+            
+            # Refresh Scan Control Info Labels if they exist
+            if hasattr(self.scan_control_tab, 'load_project_info'):
+                self.scan_control_tab.load_project_info()
+                self.scan_control_tab.lbl_target.setText(f"TARGET: {client}")
+                
+            # Note: We don't force-reload scope file content in worker because it reads file on run, 
+            # but we updated the physical file so next scan uses new scope.
 
     def update_task_menu_text(self, count):
         if hasattr(self, 'action_bg_tasks'):
@@ -785,14 +671,14 @@ class CyberSecBuddyApp(QMainWindow):
 
         self.content_stack = QStackedWidget()
         self.content_stack.addWidget(self.scan_control_tab) 
-        self.content_stack.addWidget(self.enumeration_widget)
+        self.content_stack.addWidget(self.enumeration_tab)
         self.content_stack.addWidget(self.playground_tab)
         self.content_stack.addWidget(self.attack_vectors_widget)
         self.content_stack.addWidget(self.exploiting_widget)
         self.content_stack.addWidget(self.report_tab)
 
         self.sidebar_btns = []
-        labels = ["Scan Control", "Enumeration", "Playground", "Attack Vectors", "Exploiting", " Reporting"]
+        labels = ["Scan Control", "Enumeration", "Playground", "Threat Modeling", "Exploiting", " Reporting"]
         for i, label in enumerate(labels):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -856,13 +742,10 @@ class CyberSecBuddyApp(QMainWindow):
         self.terminal_tab.set_working_directory(new_path)
         command_db.set_setting('last_cwd', new_path)
 
-        # --- Add this update ---
         if hasattr(self, 'attack_vectors_widget'):
-            # Update the folder and force a refresh/re-check of DB
             self.attack_vectors_widget.db_manager.project_folder = new_path
             self.attack_vectors_widget.db_manager.network_db_path = os.path.join(new_path, "network_information.db")
             self.attack_vectors_widget.refresh_view()
-        # -----------------------
 
         if hasattr(self.scan_control_tab, 'on_cwd_changed'):
             self.scan_control_tab.on_cwd_changed(new_path)

@@ -7,12 +7,15 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QGraphicsView, QGraphicsScene
                              QGraphicsItem, QDialog, QHBoxLayout, QLabel, 
                              QTreeWidget, QTreeWidgetItem, QSplitter, QFrame,
                              QPushButton, QMessageBox, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QLineEdit, QCheckBox, QStackedWidget, QGraphicsLineItem, QScrollArea, QComboBox, QSizePolicy)
+                             QHeaderView, QLineEdit, QCheckBox, QStackedWidget, 
+                             QGraphicsLineItem, QScrollArea, QComboBox, QSizePolicy,
+                             QTabWidget, QTextEdit)
 from PyQt5.QtCore import Qt, QRectF, QPointF, QLineF
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QRadialGradient, QPolygonF
+from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QRadialGradient, QPolygonF, QGuiApplication
 
-# Import the DB utility
+# Import utilities
 from utils import attack_vectors_db
+from utils.enum_db_manager import EnumDBManager
 
 # ---------------------------------------------------------
 # 1. CUSTOM GRAPHICS COMPONENTS
@@ -24,14 +27,24 @@ class ZoomableGraphicsView(QGraphicsView):
         super().__init__(scene, parent)
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setStyleSheet("background-color: #12121e; border: none;")
+        
+        # CHANGED: Radial Gradient Background to make nodes pop
+        self.setStyleSheet("""
+            QGraphicsView {
+                background: qradialgradient(
+                    cx: 0.5, cy: 0.5, radius: 1.0,
+                    fx: 0.5, fy: 0.5,
+                    stop: 0 #2a2a3a, 
+                    stop: 1 #101015
+                );
+                border: none;
+            }
+        """)
+        
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
 
     def wheelEvent(self, event):
-        """Handle zoom in/out with Ctrl key, or standard scroll."""
-        # Optional: Require Ctrl key for zoom to avoid interfering with normal scrolling
-        # If you want always-on zoom, remove the modifiers check.
         if event.modifiers() & Qt.ControlModifier:
             zoom_in_factor = 1.15
             zoom_out_factor = 1 / zoom_in_factor
@@ -139,69 +152,6 @@ class NetworkNodeItem(QGraphicsItem):
         self.callback(self.data)
         super().mouseDoubleClickEvent(event)
 
-# ---------------------------------------------------------
-# NEW: NOTEBOOK-STYLE CARD WIDGET
-# ---------------------------------------------------------
-class AttackVectorCard(QFrame):
-    """A stylish card representing a single attack vector."""
-    def __init__(self, vector_data, port):
-        super().__init__()
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setStyleSheet("""
-            AttackVectorCard {
-                background-color: #2a2a3b;
-                border: 1px solid #3e3e50;
-                border-radius: 8px;
-                margin-bottom: 8px;
-            }
-            QLabel#Title { font-size: 16px; font-weight: bold; color: #00d2ff; }
-            QLabel#Service { font-size: 12px; font-weight: bold; color: #aaa; }
-            QLabel#TagDanger { background-color: #550000; color: #ffcccc; border-radius: 4px; padding: 4px; font-size: 11px; }
-            QLabel#TagSafe { background-color: #224422; color: #ccffcc; border-radius: 4px; padding: 4px; font-size: 11px; }
-            QLabel#TagAuth { background-color: #554400; color: #ffddaa; border-radius: 4px; padding: 4px; font-size: 11px; }
-            QLabel#TagNoAuth { background-color: #004444; color: #ccffff; border-radius: 4px; padding: 4px; font-size: 11px; }
-        """)
-        
-        layout = QVBoxLayout(self)
-        
-        # Header: Service & Port
-        lbl_service = QLabel(f"{vector_data['service'].upper()} (Port {port})")
-        lbl_service.setObjectName("Service")
-        layout.addWidget(lbl_service)
-        
-        # Body: Attack Name
-        lbl_title = QLabel(vector_data['name'])
-        lbl_title.setObjectName("Title")
-        lbl_title.setWordWrap(True)
-        layout.addWidget(lbl_title)
-        
-        # Footer: Tags
-        tag_layout = QHBoxLayout()
-        tag_layout.setSpacing(10)
-        
-        # Dangerous Tag
-        if vector_data['dangerous']:
-            lbl_danger = QLabel("DANGEROUS")
-            lbl_danger.setObjectName("TagDanger")
-            tag_layout.addWidget(lbl_danger)
-        else:
-            lbl_safe = QLabel("Safe Check")
-            lbl_safe.setObjectName("TagSafe")
-            tag_layout.addWidget(lbl_safe)
-
-        # Auth Tag
-        if vector_data['auth']:
-            lbl_auth = QLabel("AUTH REQ")
-            lbl_auth.setObjectName("TagAuth")
-            tag_layout.addWidget(lbl_auth)
-        else:
-            lbl_no_auth = QLabel("NO AUTH")
-            lbl_no_auth.setObjectName("TagNoAuth")
-            tag_layout.addWidget(lbl_no_auth)
-            
-        tag_layout.addStretch()
-        layout.addLayout(tag_layout)
-
 class SubnetHubItem(QGraphicsItem):
     """A visual anchor for a subnet."""
     def __init__(self, subnet_name):
@@ -233,25 +183,155 @@ class SubnetHubItem(QGraphicsItem):
         painter.drawText(QRectF(-40, 15, 80, 20), Qt.AlignCenter, self.subnet_name)
 
 # ---------------------------------------------------------
-# 2. DIALOGS (Details & DB Management)
+# 2. UI CARDS (Attack Vector & Enum Command)
+# ---------------------------------------------------------
+
+class AttackVectorCard(QFrame):
+    def __init__(self, vector_data, port):
+        super().__init__()
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setStyleSheet("""
+            AttackVectorCard { background-color: #2a2a3b; border: 1px solid #3e3e50; border-radius: 8px; margin-bottom: 8px; }
+            QLabel#Title { font-size: 16px; font-weight: bold; color: #00d2ff; }
+            QLabel#Service { font-size: 12px; font-weight: bold; color: #aaa; }
+            QLabel#TagDanger { background-color: #550000; color: #ffcccc; border-radius: 4px; padding: 4px; font-size: 11px; }
+            QLabel#TagSafe { background-color: #224422; color: #ccffcc; border-radius: 4px; padding: 4px; font-size: 11px; }
+            QLabel#TagAuth { background-color: #554400; color: #ffddaa; border-radius: 4px; padding: 4px; font-size: 11px; }
+            QLabel#TagNoAuth { background-color: #004444; color: #ccffff; border-radius: 4px; padding: 4px; font-size: 11px; }
+        """)
+        layout = QVBoxLayout(self)
+        lbl_service = QLabel(f"{vector_data['service'].upper()} (Port {port})")
+        lbl_service.setObjectName("Service")
+        layout.addWidget(lbl_service)
+        lbl_title = QLabel(vector_data['name'])
+        lbl_title.setObjectName("Title")
+        lbl_title.setWordWrap(True)
+        layout.addWidget(lbl_title)
+        tag_layout = QHBoxLayout()
+        tag_layout.setSpacing(10)
+        
+        if vector_data['dangerous']:
+            tag_layout.addWidget(QLabel("DANGEROUS", objectName="TagDanger"))
+        else:
+            tag_layout.addWidget(QLabel("Safe Check", objectName="TagSafe"))
+
+        if vector_data['auth']:
+            tag_layout.addWidget(QLabel("AUTH REQ", objectName="TagAuth"))
+        else:
+            tag_layout.addWidget(QLabel("NO AUTH", objectName="TagNoAuth"))
+            
+        tag_layout.addStretch()
+        layout.addLayout(tag_layout)
+
+class EnumCommandCard(QFrame):
+    """
+    Groups multiple commands with the same title into one card.
+    Displays commands in a single text box with a large COPY button.
+    """
+    def __init__(self, title, command_list, target_ip):
+        super().__init__()
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setStyleSheet("""
+            EnumCommandCard { 
+                background-color: #252530; 
+                border: 1px solid #4a4a5e; 
+                border-radius: 6px; 
+                margin-bottom: 5px; 
+            }
+            QLabel#CmdTitle { font-size: 14px; font-weight: bold; color: #e0e0e0; }
+            QTextEdit { 
+                background-color: #15151b; 
+                border: 1px solid #333; 
+                color: #00ff00; 
+                font-family: Consolas; 
+                font-size: 12px; 
+            }
+            QPushButton { 
+                background-color: #3e3e50; 
+                color: white; 
+                border: none; 
+                border-left: 1px solid #4a4a5e;
+                border-radius: 0px; 
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                font-weight: bold; 
+                font-size: 13px;
+            }
+            QPushButton:hover { background-color: #00d2ff; color: #1e1e2f; }
+        """)
+        
+        self.lines = []
+        is_auth = False
+        for cmd in command_list:
+            if cmd.get('auth'): is_auth = True
+            filled = cmd['command'].replace("{IP}", target_ip)
+            self.lines.append(filled)
+            
+        self.full_text = "\n".join(self.lines)
+        
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        left_container = QWidget()
+        left_layout = QVBoxLayout(left_container)
+        left_layout.setContentsMargins(10, 10, 10, 10)
+        
+        header_layout = QHBoxLayout()
+        lbl_title = QLabel(title)
+        lbl_title.setObjectName("CmdTitle")
+        header_layout.addWidget(lbl_title)
+        
+        if is_auth:
+            lbl_auth = QLabel(" [AUTH]")
+            lbl_auth.setStyleSheet("color: #ffcc00; font-weight: bold; font-size: 10px;")
+            header_layout.addWidget(lbl_auth)
+        header_layout.addStretch()
+        left_layout.addLayout(header_layout)
+        
+        self.txt_cmd = QTextEdit()
+        self.txt_cmd.setText(self.full_text)
+        self.txt_cmd.setReadOnly(True)
+        line_count = len(self.lines)
+        box_height = max(45, line_count * 22 + 10)
+        self.txt_cmd.setFixedHeight(box_height)
+        
+        left_layout.addWidget(self.txt_cmd)
+        
+        btn_copy = QPushButton("COPY")
+        btn_copy.setFixedWidth(80) 
+        btn_copy.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
+        btn_copy.setCursor(Qt.PointingHandCursor)
+        btn_copy.setToolTip("Copy all commands")
+        btn_copy.clicked.connect(self.copy_to_clipboard)
+
+        main_layout.addWidget(left_container, stretch=1)
+        main_layout.addWidget(btn_copy)
+
+    def copy_to_clipboard(self):
+        cb = QGuiApplication.clipboard()
+        cb.setText(self.full_text)
+
+# ---------------------------------------------------------
+# 3. DIALOGS
 # ---------------------------------------------------------
 
 class DatabaseManagerDialog(QDialog):
     def __init__(self, db_path, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Manage Attack Vectors Database")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(850, 600)
         self.db_path = db_path
         self.setStyleSheet("""
             QDialog { background-color: #1e1e2f; color: white; }
             QTableWidget { background-color: #2f2f40; gridline-color: #4a4a5e; color: #e0e0e0; }
             QLineEdit { background-color: #222; color: #00d2ff; padding: 5px; border: 1px solid #555; }
             QPushButton { padding: 8px; background-color: #3e3e50; color: white; border: 1px solid #555; }
+            QPushButton:hover { background-color: #4e4e60; border-color: #00d2ff; }
         """)
 
         layout = QVBoxLayout(self)
 
-        # Form
         form_group = QFrame()
         form_group.setStyleSheet("background-color: #252535; border-radius: 5px; padding: 10px;")
         form_layout = QHBoxLayout(form_group)
@@ -259,13 +339,16 @@ class DatabaseManagerDialog(QDialog):
         self.inp_ports = QLineEdit(); self.inp_ports.setPlaceholderText("Ports")
         self.inp_name = QLineEdit(); self.inp_name.setPlaceholderText("Attack Name")
         self.chk_auth = QCheckBox("Auth Req"); self.chk_danger = QCheckBox("Dangerous")
-        btn_add = QPushButton("Add"); btn_add.clicked.connect(self.add_entry)
+        btn_add = QPushButton("Add Vector"); btn_add.clicked.connect(self.add_entry)
         
-        for w in [self.inp_service, self.inp_ports, self.inp_name, self.chk_auth, self.chk_danger, btn_add]:
-            form_layout.addWidget(w)
+        form_layout.addWidget(self.inp_service)
+        form_layout.addWidget(self.inp_ports)
+        form_layout.addWidget(self.inp_name)
+        form_layout.addWidget(self.chk_auth)
+        form_layout.addWidget(self.chk_danger)
+        form_layout.addWidget(btn_add)
         layout.addWidget(form_group)
 
-        # Table
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["ID", "Service", "Ports", "Attack Name", "Auth?", "Dangerous?"])
@@ -273,8 +356,19 @@ class DatabaseManagerDialog(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         layout.addWidget(self.table)
 
-        btn_del = QPushButton("Delete Selected"); btn_del.clicked.connect(self.delete_entry)
-        layout.addWidget(btn_del)
+        btn_layout = QHBoxLayout()
+        btn_del = QPushButton("Delete Selected")
+        btn_del.clicked.connect(self.delete_entry)
+        
+        btn_import = QPushButton("Import CSV...")
+        btn_import.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
+        btn_import.clicked.connect(self.import_csv)
+        
+        btn_layout.addWidget(btn_del)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_import)
+        
+        layout.addLayout(btn_layout)
         self.load_data()
 
     def load_data(self):
@@ -293,6 +387,7 @@ class DatabaseManagerDialog(QDialog):
         if attack_vectors_db.add_attack_vector(self.db_path, self.inp_service.text(), self.inp_ports.text(), 
                                                self.inp_name.text(), self.chk_auth.isChecked(), self.chk_danger.isChecked()):
             self.load_data()
+            self.inp_name.clear()
 
     def delete_entry(self):
         if self.table.currentRow() >= 0:
@@ -301,230 +396,208 @@ class DatabaseManagerDialog(QDialog):
                 attack_vectors_db.delete_attack_vector(self.db_path, vid)
                 self.load_data()
 
+    def import_csv(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select CSV", "", "CSV Files (*.csv)")
+        if path:
+            success, msg = attack_vectors_db.import_from_csv(self.db_path, path)
+            if success:
+                QMessageBox.information(self, "Import Successful", msg)
+                self.load_data()
+            else:
+                QMessageBox.critical(self, "Import Failed", msg)
+
 # ---------------------------------------------------------
-# UPDATED: DETAILS DIALOG (3-Dropdown Filter)
+# 4. NODE DETAILS DIALOG (The Cross-Compare Logic)
 # ---------------------------------------------------------
-from PyQt5.QtWidgets import QScrollArea, QComboBox, QSizePolicy
 
 class NodeDetailsDialog(QDialog):
     def __init__(self, node_data, db_manager, parent=None):
         super().__init__(parent)
         self.node_data = node_data
         self.db_manager = db_manager
+        self.enum_db = EnumDBManager() 
         
         self.setWindowTitle(f"Target Intelligence: {node_data['ip']}")
-        self.resize(1100, 750) 
+        self.resize(1200, 800) 
         self.setStyleSheet("""
             QDialog { background-color: #1e1e2f; color: white; }
             QLabel { color: #e0e0e0; font-size: 13px; }
             QFrame#Panel { background-color: #252535; border-radius: 10px; }
-            QComboBox { 
-                background-color: #222; color: #00d2ff; 
-                border: 1px solid #4a4a5e; border-radius: 5px; padding: 4px; 
-                min-width: 120px;
-            }
-            QComboBox::drop-down { border: none; }
-            QPushButton {
-                background-color: #00d2ff; color: #1e1e2f; font-weight: bold;
-                border-radius: 5px; padding: 6px 15px;
-            }
+            QComboBox { background-color: #222; color: #00d2ff; border: 1px solid #4a4a5e; border-radius: 5px; padding: 4px; min-width: 120px; }
+            QPushButton { background-color: #00d2ff; color: #1e1e2f; font-weight: bold; border-radius: 5px; padding: 6px 15px; }
             QPushButton:hover { background-color: #33eaff; }
+            QTabWidget::pane { border: 1px solid #4a4a5e; background-color: #252535; }
+            QTabBar::tab { background: #2f2f40; color: #aaa; padding: 10px 20px; margin-right: 2px; }
+            QTabBar::tab:selected { background: #00d2ff; color: #1e1e2f; font-weight: bold; }
             QScrollArea { border: none; background-color: transparent; }
             QWidget#ScrollContent { background-color: transparent; }
         """)
         
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
         
-        # --- TOP FILTER BAR ---
         filter_frame = QFrame()
         filter_frame.setStyleSheet("background-color: #2f2f40; border-radius: 8px;")
         filter_frame.setFixedHeight(60)
-        
         filter_layout = QHBoxLayout(filter_frame)
-        filter_layout.setContentsMargins(15, 5, 15, 5)
-        filter_layout.setSpacing(15)
         
-        # 1. Service Dropdown (Dynamic)
-        lbl_svc = QLabel("Service:"); lbl_svc.setStyleSheet("font-weight:bold;")
-        self.combo_service = QComboBox()
-        self.combo_service.addItem("All Services")
-        # Logic to populate this is at the end of __init__
+        self.combo_service = QComboBox(); self.combo_service.addItem("All Services")
+        self.combo_auth = QComboBox(); self.combo_auth.addItems(["All", "Auth Required", "No Auth Required"])
+        self.combo_danger = QComboBox(); self.combo_danger.addItems(["All", "Dangerous Only", "Safe/Info"])
+        btn_apply = QPushButton("Apply Filters"); btn_apply.clicked.connect(self.refresh_views)
         
-        # 2. Auth Dropdown
-        lbl_auth = QLabel("Auth:"); lbl_auth.setStyleSheet("font-weight:bold;")
-        self.combo_auth = QComboBox()
-        self.combo_auth.addItems(["All", "Auth Required", "No Auth Required"])
-        
-        # 3. Risk Dropdown
-        lbl_risk = QLabel("Risk:"); lbl_risk.setStyleSheet("font-weight:bold;")
-        self.combo_danger = QComboBox()
-        self.combo_danger.addItems(["All", "Dangerous Only", "Safe/Info"])
-        
-        # 4. Apply Button
-        btn_apply = QPushButton("Apply Filters")
-        btn_apply.setStyleSheet('color: #1e1e2f; background-color: #00d2ff; font-weight: bold;')
-        btn_apply.clicked.connect(self.populate_vectors)
-        
-        # Add widgets to layout
-        filter_layout.addWidget(lbl_svc)
+        filter_layout.addWidget(QLabel("Service:"))
         filter_layout.addWidget(self.combo_service)
-        filter_layout.addWidget(lbl_auth)
+        filter_layout.addWidget(QLabel("Auth:"))
         filter_layout.addWidget(self.combo_auth)
-        filter_layout.addWidget(lbl_risk)
+        filter_layout.addWidget(QLabel("Risk:"))
         filter_layout.addWidget(self.combo_danger)
-        filter_layout.addStretch() # Push everything left
+        filter_layout.addStretch()
         filter_layout.addWidget(btn_apply)
-        
         main_layout.addWidget(filter_frame)
         
-        # --- SPLIT CONTENT ---
         splitter = QSplitter(Qt.Horizontal)
         
-        # LEFT: Host Information
-        left_panel = QFrame()
-        left_panel.setObjectName("Panel")
+        left_panel = QFrame(); left_panel.setObjectName("Panel")
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setSpacing(15)
-        
-        # IP Header
-        lbl_ip = QLabel(node_data['ip'])
-        lbl_ip.setStyleSheet("font-size: 32px; font-weight: bold; color: #00d2ff;")
-        left_layout.addWidget(lbl_ip)
-        
-        # Status
+        left_layout.addWidget(QLabel(node_data['ip'], styleSheet="font-size: 32px; font-weight: bold; color: #00d2ff;"))
         status_color = "#00ff00" if node_data['live'] else "#ff4444"
-        lbl_status = QLabel(f"Status: <span style='color:{status_color};'>{'ONLINE' if node_data['live'] else 'OFFLINE'}</span>")
-        lbl_status.setStyleSheet("font-size: 18px; font-weight: bold;")
-        left_layout.addWidget(lbl_status)
-        
+        left_layout.addWidget(QLabel(f"Status: <span style='color:{status_color};'>{'ONLINE' if node_data['live'] else 'OFFLINE'}</span>", styleSheet="font-size: 18px;"))
         left_layout.addWidget(QLabel("_________________________"))
-        
-        # Port List (Styled)
-        lbl_ports = QLabel("Open Ports & Services")
-        lbl_ports.setStyleSheet("font-size: 20px; font-weight: bold; margin-top: 10px;")
-        left_layout.addWidget(lbl_ports)
         
         self.ports_list = QTreeWidget()
         self.ports_list.setHeaderLabels(["Port", "Service"])
-        self.ports_list.setStyleSheet("""
-            QTreeWidget { 
-                background-color: #1e1e2f; border: 1px solid #4a4a5e; 
-                font-size: 14px; color: #fff; border-radius: 5px;
-            }
-            QHeaderView::section { background-color: #2f2f40; color: white; padding: 5px; font-weight: bold; }
-        """)
+        self.ports_list.setStyleSheet("background-color: #1e1e2f; border: 1px solid #4a4a5e; color: #fff;")
         left_layout.addWidget(self.ports_list)
-        
         splitter.addWidget(left_panel)
 
-        # RIGHT: Attack Vectors (Scrollable Cards)
-        right_panel = QFrame()
-        right_panel.setObjectName("Panel")
-        right_layout = QVBoxLayout(right_panel)
+        self.tabs = QTabWidget()
         
-        lbl_vec = QLabel("Potential Attack Vectors")
-        lbl_vec.setStyleSheet("font-size: 22px; font-weight: bold; color: #ff9999; margin-bottom: 10px;")
-        right_layout.addWidget(lbl_vec)
+        self.tab_vectors = QWidget()
+        vec_layout = QVBoxLayout(self.tab_vectors)
+        vec_layout.addWidget(QLabel("Potential Attack Vectors", styleSheet="font-size: 18px; font-weight: bold; color: #ff9999;"))
         
-        # Scroll Area for Cards
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        self.scroll_content = QWidget()
-        self.scroll_content.setObjectName("ScrollContent")
-        self.cards_layout = QVBoxLayout(self.scroll_content)
-        self.cards_layout.setAlignment(Qt.AlignTop)
-        self.cards_layout.setSpacing(10)
+        scroll_vec = QScrollArea(); scroll_vec.setWidgetResizable(True)
+        self.scroll_vec_content = QWidget(); self.scroll_vec_content.setObjectName("ScrollContent")
+        self.vec_layout = QVBoxLayout(self.scroll_vec_content); self.vec_layout.setAlignment(Qt.AlignTop)
+        scroll_vec.setWidget(self.scroll_vec_content)
+        vec_layout.addWidget(scroll_vec)
         
-        scroll.setWidget(self.scroll_content)
-        right_layout.addWidget(scroll)
+        self.tabs.addTab(self.tab_vectors, "Attack Vectors")
+
+        self.tab_enum = QWidget()
+        enum_layout = QVBoxLayout(self.tab_enum)
+        enum_layout.addWidget(QLabel("Enumeration Commands (Ready to Run)", styleSheet="font-size: 18px; font-weight: bold; color: #00d2ff;"))
         
-        splitter.addWidget(right_panel)
-        splitter.setSizes([350, 750]) 
+        scroll_enum = QScrollArea(); scroll_enum.setWidgetResizable(True)
+        self.scroll_enum_content = QWidget(); self.scroll_enum_content.setObjectName("ScrollContent")
+        self.enum_layout = QVBoxLayout(self.scroll_enum_content); self.enum_layout.setAlignment(Qt.AlignTop)
+        scroll_enum.setWidget(self.scroll_enum_content)
+        enum_layout.addWidget(scroll_enum)
         
-        main_layout.addWidget(splitter, 1) 
+        self.tabs.addTab(self.tab_enum, "Enumeration Guide")
         
-        # Initial Population
+        splitter.addWidget(self.tabs)
+        splitter.setSizes([350, 850])
+        main_layout.addWidget(splitter)
+        
         self.populate_host_info()
-        self.populate_vectors()
+        self.refresh_views()
 
     def populate_host_info(self):
         self.ports_list.clear()
         found_services = set()
         
+        self.host_services = {} 
+        
         for port in self.node_data['ports']:
             svc, _ = self.db_manager.get_attack_info(port)
+            self.host_services[port] = svc
+            
             item = QTreeWidgetItem(self.ports_list)
             item.setText(0, port)
             item.setText(1, svc)
             found_services.add(svc)
             
-        # Dynamically fill the Service Dropdown based on what we found
-        for s in sorted(list(found_services)):
+        for s in sorted(list(found_services)): 
             self.combo_service.addItem(s)
 
+    def refresh_views(self):
+        self.populate_vectors()
+        self.populate_enumeration()
+
     def populate_vectors(self):
-        # 1. Clear existing cards
-        while self.cards_layout.count():
-            child = self.cards_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        while self.vec_layout.count():
+            child = self.vec_layout.takeAt(0)
+            if child.widget(): child.widget().deleteLater()
         
-        found_any = False
-        
-        # 2. Get Filter States
         target_svc = self.combo_service.currentText()
         target_auth = self.combo_auth.currentText()
         target_risk = self.combo_danger.currentText()
+        found_any = False
 
-        # 3. Loop through ports and vectors
         for port in self.node_data['ports']:
             svc, vectors = self.db_manager.get_attack_info(port)
-            
-            # Filter 1: Service Level (Pre-check)
-            if target_svc != "All Services" and svc != target_svc:
-                continue
+            if target_svc != "All Services" and svc != target_svc: continue
 
             for v in vectors:
-                # Filter 2: Auth
                 if target_auth == "Auth Required" and not v['auth']: continue
                 if target_auth == "No Auth Required" and v['auth']: continue
-                
-                # Filter 3: Risk
                 if target_risk == "Dangerous Only" and not v['dangerous']: continue
                 if target_risk == "Safe/Info" and v['dangerous']: continue
                 
-                # Create Card
-                card = AttackVectorCard(v, port)
-                self.cards_layout.addWidget(card)
+                self.vec_layout.addWidget(AttackVectorCard(v, port))
                 found_any = True
         
-        # 4. Empty State Message
         if not found_any:
-            lbl_empty = QLabel(f"No vectors match the current filters.")
-            lbl_empty.setStyleSheet("color: #666; font-size: 16px; font-style: italic; margin-top: 20px;")
-            lbl_empty.setAlignment(Qt.AlignCenter)
-            self.cards_layout.addWidget(lbl_empty)
+            self.vec_layout.addWidget(QLabel("No vectors match filters.", alignment=Qt.AlignCenter, styleSheet="color: #666; font-size: 16px;"))
+
+    def populate_enumeration(self):
+        while self.enum_layout.count():
+            child = self.enum_layout.takeAt(0)
+            if child.widget(): child.widget().deleteLater()
+            
+        target_svc = self.combo_service.currentText()
+        found_cmds = False
+        
+        services_to_query = set()
+        for port, svc in self.host_services.items():
+            if target_svc == "All Services" or svc == target_svc:
+                services_to_query.add(svc)
+        
+        for svc in services_to_query:
+            commands = self.enum_db.get_commands(svc)
+            if commands:
+                header = QLabel(f"Service: {svc.upper()}")
+                header.setStyleSheet("color: #aaa; font-weight: bold; margin-top: 15px; border-bottom: 1px solid #444;")
+                self.enum_layout.addWidget(header)
+                
+                grouped_cmds = defaultdict(list)
+                for c in commands:
+                    grouped_cmds[c['title']].append(c)
+
+                for title, cmd_list in grouped_cmds.items():
+                    card = EnumCommandCard(title, cmd_list, self.node_data['ip'])
+                    self.enum_layout.addWidget(card)
+                    found_cmds = True
+                    
+        if not found_cmds:
+             self.enum_layout.addWidget(QLabel("No enumeration commands found for these services.", alignment=Qt.AlignCenter, styleSheet="color: #666; font-size: 16px;"))
+
 
 # ---------------------------------------------------------
-# 3. DATA MANAGER
+# 5. DATA MANAGER
 # ---------------------------------------------------------
 
 class AttackDataManager:
-    def __init__(self, project_folder, attack_db_path):
+    def __init__(self, project_folder, attack_db_path=None):
         self.project_folder = project_folder
         self.network_db_path = os.path.join(project_folder, "network_information.db")
-        self.attack_db_path = attack_db_path
-        
-        # Ensure Attack DB exists using utils
-        attack_vectors_db.initialize_attack_db(self.attack_db_path)
+        self.attack_db_path = attack_vectors_db.initialize_attack_db(attack_db_path)
 
     def network_db_exists(self):
         return os.path.exists(self.network_db_path)
 
     def create_network_db(self):
-        """Reads naabu_out and scope.txt to create network_information.db."""
         host_port_file = os.path.join(self.project_folder, "naabu_out")
         host_file = os.path.join(self.project_folder, "scope.txt")
 
@@ -534,7 +607,6 @@ class AttackDataManager:
         host_ports = defaultdict(set)
         hosts = set()
 
-        # Parse Naabu
         try:
             with open(host_port_file, "r") as f:
                 for line in f:
@@ -543,7 +615,6 @@ class AttackDataManager:
                         host_ports[h].add(p)
         except Exception as e: return False, str(e)
 
-        # Parse Scope
         try:
             with open(host_file, "r") as f:
                 for line in f:
@@ -552,7 +623,6 @@ class AttackDataManager:
 
         all_hosts = hosts.union(host_ports.keys())
         
-        # Create DB
         try:
             conn = sqlite3.connect(self.network_db_path)
             cur = conn.cursor()
@@ -587,26 +657,23 @@ class AttackDataManager:
         return attack_vectors_db.get_vectors_for_port(self.attack_db_path, port)
 
 # ---------------------------------------------------------
-# 4. MAIN WIDGET
+# 6. MAIN WIDGET
 # ---------------------------------------------------------
 
 class AttackVectorsWidget(QWidget):
-    def __init__(self, project_folder, attack_db_path, parent=None):
+    def __init__(self, project_folder, attack_db_path=None, parent=None):
         super().__init__(parent)
         self.db_manager = AttackDataManager(project_folder, attack_db_path)
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0,0,0,0)
-        
         self.stack = QStackedWidget()
         self.layout.addWidget(self.stack)
         
-        # PAGE 1: Create DB Prompt
         self.page_create = QWidget()
         self.setup_create_page()
         self.stack.addWidget(self.page_create)
         
-        # PAGE 2: Navigable Map
         self.page_map = QWidget()
         self.setup_map_page()
         self.stack.addWidget(self.page_map)
@@ -617,58 +684,34 @@ class AttackVectorsWidget(QWidget):
         layout = QVBoxLayout(self.page_create)
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(15)
-        
         layout.addWidget(QLabel("<h2>Network Database Not Found</h2>"))
-        
         self.lbl_status = QLabel("Checking file requirements...")
         self.lbl_status.setStyleSheet("color: #aaa;")
-        
         self.btn_create = QPushButton("Create Database from Scan Output")
         self.btn_create.setFixedSize(300, 50)
-        self.btn_create.setStyleSheet("""
-            QPushButton { background-color: #00d2ff; color: #1e1e2f; font-weight: bold; }
-            QPushButton:disabled { background-color: #333; color: #555; }
-        """)
+        self.btn_create.setStyleSheet("background-color: #00d2ff; color: #1e1e2f; font-weight: bold;")
         self.btn_create.clicked.connect(self.create_db)
-        
         btn_check = QPushButton("Re-check Files")
         btn_check.setFixedWidth(200)
         btn_check.clicked.connect(self.check_files_availability)
-        
         layout.addWidget(self.lbl_status, alignment=Qt.AlignCenter)
         layout.addWidget(self.btn_create, alignment=Qt.AlignCenter)
         layout.addWidget(btn_check, alignment=Qt.AlignCenter)
 
     def setup_map_page(self):
         layout = QVBoxLayout(self.page_map)
-        
-        # Toolbar
         bar = QHBoxLayout()
-        bar.setContentsMargins(10, 5, 10, 5)
-        
-        lbl = QLabel("<b>Use Ctrl+Scroll to Zoom, Drag to Pan.</b> Drag nodes to reorganize.")
-        lbl.setStyleSheet("color: #888;")
-        
+        bar.addWidget(QLabel("<b>Use Ctrl+Scroll to Zoom, Drag to Pan.</b> Drag nodes to reorganize.", styleSheet="color: #888;"))
+        bar.addStretch()
+        btn_reset = QPushButton("✖ Reset DB"); btn_reset.setStyleSheet("color: #ff4444; border: 1px solid #550000;")
+        btn_reset.clicked.connect(self.reset_network_db)
         btn_db = QPushButton("⚙ Vectors DB"); btn_db.clicked.connect(self.open_db_mgr)
         btn_ref = QPushButton("↻ Refresh"); btn_ref.clicked.connect(self.refresh_map_view)
-        
-        btn_reset = QPushButton("✖ Reset DB")
-        btn_reset.setStyleSheet("color: #ff4444; border: 1px solid #550000;")
-        btn_reset.clicked.connect(self.reset_network_db)
-        
-        bar.addWidget(lbl)
-        bar.addStretch()
-        bar.addWidget(btn_reset)
-        bar.addWidget(btn_db)
-        bar.addWidget(btn_ref)
+        bar.addWidget(btn_reset); bar.addWidget(btn_db); bar.addWidget(btn_ref)
         layout.addLayout(bar)
-        
-        # View
         self.scene = QGraphicsScene()
         self.view = ZoomableGraphicsView(self.scene)
         layout.addWidget(self.view)
-
-    # --- Logic ---
 
     def check_database_state(self):
         if self.db_manager.network_db_exists():
@@ -682,7 +725,6 @@ class AttackVectorsWidget(QWidget):
         p_folder = self.db_manager.project_folder
         f1 = os.path.exists(os.path.join(p_folder, "scope.txt"))
         f2 = os.path.exists(os.path.join(p_folder, "naabu_out"))
-        
         if f1 and f2:
             self.btn_create.setEnabled(True)
             self.lbl_status.setText("Files found: <span style='color:#0f0'>scope.txt, naabu_out</span>")
@@ -700,9 +742,7 @@ class AttackVectorsWidget(QWidget):
 
     def reset_network_db(self):
         if QMessageBox.question(self, "Reset", "Delete current map?", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
-            try:
-                os.remove(self.db_manager.network_db_path)
-                self.check_database_state()
+            try: os.remove(self.db_manager.network_db_path); self.check_database_state()
             except: pass
 
     def get_subnet(self, ip):
@@ -713,35 +753,24 @@ class AttackVectorsWidget(QWidget):
         self.scene.clear()
         nodes = self.db_manager.get_all_hosts()
         if not nodes: return
-
-        # Group by subnet
         subnets = defaultdict(list)
         for n in nodes: subnets[self.get_subnet(n['ip'])].append(n)
-
         hub_x = 0
-        spacing = 450
-        
         for sn, hosts in subnets.items():
-            # Create Hub
             hub = SubnetHubItem(f"{sn}.x")
             hub.setPos(hub_x, 0)
             self.scene.addItem(hub)
-            
-            # Place Hosts
             count = len(hosts)
             radius = 120 + (count * 5)
             for i, h_data in enumerate(hosts):
                 angle = (2 * math.pi * i) / count if count else 0
                 nx = hub_x + radius * math.cos(angle)
                 ny = radius * math.sin(angle)
-                
                 node = NetworkNodeItem(h_data, self.open_details)
                 node.setPos(nx, ny)
                 self.scene.addItem(node)
                 self.scene.addItem(ConnectionEdge(hub, node))
-            
-            hub_x += spacing + radius
-
+            hub_x += 450 + radius
         self.scene.setSceneRect(self.scene.itemsBoundingRect())
 
     def open_details(self, data):
@@ -749,3 +778,7 @@ class AttackVectorsWidget(QWidget):
 
     def open_db_mgr(self):
         DatabaseManagerDialog(self.db_manager.attack_db_path, self).exec_()
+    
+    # ADDED HELPER for refreshing
+    def refresh_view(self):
+        self.check_database_state()

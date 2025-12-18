@@ -2,7 +2,13 @@ import sqlite3
 import os
 import re
 
-DB_FILE = "recon_automator.db"
+# Resolve repository root (two levels up from utils/), then resources folder
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_RESOURCES_DIR = os.path.join(_BASE_DIR, "resources")
+if not os.path.exists(_RESOURCES_DIR):
+    os.makedirs(_RESOURCES_DIR, exist_ok=True)
+
+DB_FILE = os.path.join(_RESOURCES_DIR, "recon_automator.db")
 TEMPLATES_DIR = "templates"
 
 def get_db_connection():
