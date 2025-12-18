@@ -524,6 +524,7 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.report_tab import ReportTabWidget
         from modules.attack_vectors import AttackVectorsWidget
         from modules.enumeration import EnumerationWidget
+        from modules.c2 import C2Widget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
@@ -559,6 +560,7 @@ class CyberSecBuddyApp(QMainWindow):
         self.attack_vectors_widget = AttackVectorsWidget(project_folder=project_folder, attack_db_path=attack_db_path)
         # UPDATED: Pass project_db_path to EnumerationWidget
         self.enumeration_tab = EnumerationWidget(self.working_directory, project_db_path=self.project_db_path)
+        self.c2_tab = C2Widget(self.working_directory)
 
         self.enumeration_widget = QLabel("Enumeration Tools")
         self.enumeration_widget.setAlignment(Qt.AlignCenter)
@@ -658,6 +660,7 @@ class CyberSecBuddyApp(QMainWindow):
         self.tabs.addTab(self.terminal_tab, "Terminal")
         self.tabs.addTab(self.sudo_terminal_tab, "Sudo Terminal")
         self.tabs.addTab(self.report_tab, "Reporting")
+        self.tabs.addTab(self.c2_tab, "C2 & Listeners")
 
     def setup_pentest_ui(self):
         central_widget = QWidget()
@@ -680,9 +683,10 @@ class CyberSecBuddyApp(QMainWindow):
         self.content_stack.addWidget(self.attack_vectors_widget)
         self.content_stack.addWidget(self.exploiting_widget)
         self.content_stack.addWidget(self.report_tab)
+        self.content_stack.addWidget(self.c2_tab)
 
         self.sidebar_btns = []
-        labels = ["Scan Control", "Enumeration", "Playground", "Threat Modeling", "Exploiting", " Reporting"]
+        labels = ["Scan Control", "Enumeration", "Playground", "Threat Modeling", "Exploiting", " Reporting", "C2 / Listeners"]
         for i, label in enumerate(labels):
             btn = QPushButton(label)
             btn.setCheckable(True)
