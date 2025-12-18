@@ -15,6 +15,7 @@ import shutil
 from utils import db as command_db
 from utils import project_db
 
+# ... (SimpleTextEditorDialog & StartupWizard classes remain unchanged) ...
 class SimpleTextEditorDialog(QDialog):
     """A simple popup to let the user type in domains or scope IPs manually."""
     def __init__(self, title, current_text="", parent=None):
@@ -552,7 +553,8 @@ class CyberSecBuddyApp(QMainWindow):
         
         project_folder = os.path.dirname(self.project_db_path) if self.project_db_path else self.working_directory
         self.attack_vectors_widget = AttackVectorsWidget(project_folder=project_folder, attack_db_path=attack_db_path)
-        self.enumeration_tab = EnumerationWidget(self.working_directory)
+        # UPDATED: Pass project_db_path to EnumerationWidget
+        self.enumeration_tab = EnumerationWidget(self.working_directory, project_db_path=self.project_db_path)
 
         self.enumeration_widget = QLabel("Enumeration Tools")
         self.enumeration_widget.setAlignment(Qt.AlignCenter)
@@ -574,6 +576,7 @@ class CyberSecBuddyApp(QMainWindow):
         
         self.apply_theme()
 
+    # ... rest of the class is unchanged ...
     def setup_global_menus(self):
         menubar = self.menuBar()
         
@@ -638,9 +641,6 @@ class CyberSecBuddyApp(QMainWindow):
             if hasattr(self.scan_control_tab, 'load_project_info'):
                 self.scan_control_tab.load_project_info()
                 self.scan_control_tab.lbl_target.setText(f"TARGET: {client}")
-                
-            # Note: We don't force-reload scope file content in worker because it reads file on run, 
-            # but we updated the physical file so next scan uses new scope.
 
     def update_task_menu_text(self, count):
         if hasattr(self, 'action_bg_tasks'):

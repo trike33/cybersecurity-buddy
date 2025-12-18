@@ -12,8 +12,9 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
 
-# Import the detached DB Manager
+# Import DB Managers
 from utils.enum_db_manager import EnumDBManager
+from utils import project_db  # Import project_db to fetch credentials
 
 # ---------------------------------------------------------
 # 1. WORKER THREAD
@@ -70,9 +71,10 @@ class EnumWorker(QThread):
 # 2. MAIN WIDGET
 # ---------------------------------------------------------
 class EnumerationWidget(QWidget):
-    def __init__(self, working_directory, parent=None):
+    def __init__(self, working_directory, project_db_path=None, parent=None):
         super().__init__(parent)
         self.working_directory = working_directory
+        self.project_db_path = project_db_path # Store the DB path
         self.db = EnumDBManager() 
         self.worker = None
         self.input_fields = {}
@@ -211,7 +213,7 @@ class EnumerationWidget(QWidget):
         vbox_opts.addLayout(hbox_pw)
         gb_opts.setLayout(vbox_opts)
 
-        # Command Queue with Taller Items
+        # Command Queue
         self.list_commands = QListWidget()
         self.list_commands.setSelectionMode(QListWidget.SingleSelection)
         self.list_commands.setMinimumHeight(200)
@@ -222,7 +224,7 @@ class EnumerationWidget(QWidget):
                 border-radius: 5px;
             }
             QListWidget::item {
-                height: 50px; /* Taller for 2 lines */
+                height: 50px;
                 padding: 5px;
                 color: #ddd;
                 border-bottom: 1px solid #2a2a35;
@@ -359,10 +361,8 @@ class EnumerationWidget(QWidget):
             if cmd['sudo']: prefix += "[SUDO] "
             
             title = f"{prefix}{cmd['title']}"
-            # Add snippet of command to list
             snippet = cmd['command']
             if len(snippet) > 60: snippet = snippet[:60] + "..."
-            
             display_text = f"{title}\n   > {snippet}"
             
             item = QListWidgetItem(display_text)
@@ -373,6 +373,7 @@ class EnumerationWidget(QWidget):
         self.generate_variable_inputs()
 
     def generate_variable_inputs(self):
+        # Clear existing inputs
         while self.layout_vars.count():
             child = self.layout_vars.takeAt(0)
             if child.widget(): child.widget().deleteLater()
@@ -394,10 +395,35 @@ class EnumerationWidget(QWidget):
             matches = re.findall(r'\{([\w_-]+)\}', text)
             for m in matches: needed_vars.add(m)
 
+        # --- AUTO-FILL LOGIC ---
+        # 1. Fetch Project Data
+        project_data = {}
+        if self.project_db_path:
+            project_data = project_db.load_project_data(self.project_db_path)
+        
+        creds = project_data.get('credentials', [])
+        domains = project_data.get('domains', [])
+        
+        # Simple Logic: Use first available credential
+        first_user = creds[0]['username'] if creds else ""
+        first_pass = creds[0]['password'] if creds else ""
+        first_domain = domains[0] if domains else ""
+
         for var in sorted(list(needed_vars)):
             line_edit = QLineEdit()
             line_edit.setPlaceholderText(f"Value for {var}")
             line_edit.setStyleSheet("padding: 5px; font-size: 13px;")
+            
+            # --- Try to Auto-Fill ---
+            var_lower = var.lower()
+            if var_lower in ['username', 'user', 'login']:
+                line_edit.setText(first_user)
+            elif var_lower in ['password', 'pass', 'pwd']:
+                line_edit.setText(first_pass)
+                line_edit.setEchoMode(QLineEdit.Password) # Optional safety
+            elif var_lower in ['domain', 'domain_name']:
+                line_edit.setText(first_domain)
+            
             line_edit.textChanged.connect(self.update_preview_text)
             
             lbl = QLabel(f"{var}:")
@@ -409,7 +435,6 @@ class EnumerationWidget(QWidget):
         self.update_preview_text()
 
     def update_preview_text(self):
-        # Pass is_preview=True to get commands even if incomplete
         commands, _ = self.prepare_commands_and_validate(show_errors=False, is_preview=True)
         
         if not commands:
@@ -418,15 +443,10 @@ class EnumerationWidget(QWidget):
 
         html_out = ""
         for i, cmd in enumerate(commands):
-            # Visually style the command
-            # Escape HTML characters in command
             safe_cmd = html.escape(cmd)
-            
-            # Highlight SUDO
             if "sudo" in safe_cmd:
                 safe_cmd = safe_cmd.replace("sudo", "<span style='color:#ff5555; font-weight:bold;'>sudo</span>")
             
-            # Create a card-like look for each command
             row_html = f"""
             <div style="background-color:#1e1e2f; margin-bottom:8px; padding:8px; border-left: 4px solid #00d2ff;">
                 <span style="color:#888; font-weight:bold;">#{i+1}</span> 
@@ -438,13 +458,7 @@ class EnumerationWidget(QWidget):
         self.txt_preview.setHtml(html_out)
 
     def prepare_commands_and_validate(self, show_errors=True, is_preview=False):
-        """
-        Substitutes variables and injects SUDO password if needed.
-        If is_preview=True, it skips validation errors (missing password, missing vars)
-        and returns the best-effort string for display.
-        """
         cmd_data_list = []
-        
         if self.rb_single.isChecked():
             item = self.list_commands.currentItem()
             if not item: return [], False
@@ -462,7 +476,6 @@ class EnumerationWidget(QWidget):
             processed_cmd = data['command']
             needs_sudo = data['sudo']
             
-            # Handle Sudo
             if needs_sudo:
                 if not root_pw:
                     if not is_preview:
@@ -470,35 +483,25 @@ class EnumerationWidget(QWidget):
                             QMessageBox.warning(self, "Sudo Required", "Root Password Required.")
                         return [], False
                     else:
-                        # For preview, just show 'sudo' without password injection or placeholder
-                        # We want to show what *would* happen. 
-                        # Or visually indicate missing password?
-                        # Let's just standard formatted display for preview.
                         if not processed_cmd.strip().startswith("sudo"):
                             processed_cmd = f"sudo {processed_cmd}"
                 else:
-                    # Valid execution mode or preview with password
                     if processed_cmd.strip().startswith("sudo"):
                         processed_cmd = re.sub(r'^sudo\s+', '', processed_cmd)
                     
                     if is_preview:
-                        # Mask password in preview
                         processed_cmd = f"echo '******' | sudo -S {processed_cmd}"
                     else:
                         processed_cmd = f"echo '{root_pw}' | sudo -S {processed_cmd}"
 
-            # Variable Substitution
             req_vars = re.findall(r'\{([\w_-]+)\}', processed_cmd)
             for var in req_vars:
                 if var in self.input_fields:
                     val = self.input_fields[var].text().strip()
                     if not val: 
                         missing_vars.append(var)
-                        # Keep placeholder if previewing
-                        # processed_cmd remains with {VAR}
                     else: 
                         processed_cmd = processed_cmd.replace(f"{{{var}}}", val)
-            
             final_commands.append(processed_cmd)
 
         if missing_vars and not is_preview:
