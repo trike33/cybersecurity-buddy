@@ -31,15 +31,27 @@ def initialize_project_db(folder_path, db_filename="project_data.db"):
         )
     ''')
 
-    # NEW Table: Credentials
+    # NEW Table: Credentials (Updated with host/service)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS credentials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT,
             password TEXT,
-            description TEXT
+            description TEXT,
+            host TEXT,
+            service TEXT
         )
     ''')
+    
+    # Migration: Attempt to add columns if they don't exist (for existing DBs)
+    try:
+        cursor.execute("ALTER TABLE credentials ADD COLUMN host TEXT")
+    except sqlite3.OperationalError:
+        pass 
+    try:
+        cursor.execute("ALTER TABLE credentials ADD COLUMN service TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     # Table: Scan Results
     cursor.execute('''
@@ -102,11 +114,11 @@ def update_project_domains(db_path, domains_text):
         return False
 
 # --- CREDENTIALS CRUD ---
-def add_credential(db_path, username, password, description=""):
+def add_credential(db_path, username, password, host="", service="", description=""):
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
-    c.execute("INSERT INTO credentials (username, password, description) VALUES (?, ?, ?)", 
-              (username, password, description))
+    c.execute("INSERT INTO credentials (username, password, host, service, description) VALUES (?, ?, ?, ?, ?)", 
+              (username, password, host, service, description))
     conn.commit()
     conn.close()
 
@@ -175,7 +187,7 @@ class ProjectEditDialog(QDialog):
         self.db_path = db_path
         self.project_dir = os.path.dirname(db_path)
         self.setWindowTitle("Edit Project Settings")
-        self.resize(750, 600)
+        self.resize(850, 600)
         self.setStyleSheet("""
             QDialog { background-color: #1e1e2f; color: white; }
             QLabel { font-size: 14px; color: #e0e0e0; font-weight: bold; }
@@ -236,11 +248,17 @@ class ProjectEditDialog(QDialog):
         
         # Input Form
         form_cred = QHBoxLayout()
+        self.cred_host = QLineEdit(); self.cred_host.setPlaceholderText("Host (IP/Domain)")
+        self.cred_service = QLineEdit(); self.cred_service.setPlaceholderText("Service (e.g. smb, ssh)")
         self.cred_user = QLineEdit(); self.cred_user.setPlaceholderText("Username")
         self.cred_pass = QLineEdit(); self.cred_pass.setPlaceholderText("Password")
-        btn_add_cred = QPushButton("Add Credential")
+        
+        btn_add_cred = QPushButton("Add")
+        btn_add_cred.setFixedWidth(80)
         btn_add_cred.clicked.connect(self.add_cred_handler)
         
+        form_cred.addWidget(self.cred_host)
+        form_cred.addWidget(self.cred_service)
         form_cred.addWidget(self.cred_user)
         form_cred.addWidget(self.cred_pass)
         form_cred.addWidget(btn_add_cred)
@@ -248,10 +266,9 @@ class ProjectEditDialog(QDialog):
         
         # Table
         self.table_creds = QTableWidget()
-        self.table_creds.setColumnCount(3)
-        self.table_creds.setHorizontalHeaderLabels(["ID", "Username", "Password"])
-        self.table_creds.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table_creds.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table_creds.setColumnCount(5)
+        self.table_creds.setHorizontalHeaderLabels(["ID", "Host", "Service", "Username", "Password"])
+        self.table_creds.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_creds.setSelectionBehavior(QTableWidget.SelectRows)
         cred_layout.addWidget(self.table_creds)
         
@@ -301,17 +318,25 @@ class ProjectEditDialog(QDialog):
         for i, c in enumerate(creds):
             self.table_creds.insertRow(i)
             self.table_creds.setItem(i, 0, QTableWidgetItem(str(c['id'])))
-            self.table_creds.setItem(i, 1, QTableWidgetItem(c['username']))
-            self.table_creds.setItem(i, 2, QTableWidgetItem(c['password']))
+            self.table_creds.setItem(i, 1, QTableWidgetItem(c.get('host', '')))
+            self.table_creds.setItem(i, 2, QTableWidgetItem(c.get('service', '')))
+            self.table_creds.setItem(i, 3, QTableWidgetItem(c['username']))
+            self.table_creds.setItem(i, 4, QTableWidgetItem(c['password']))
 
     def add_cred_handler(self):
+        h = self.cred_host.text().strip()
+        s = self.cred_service.text().strip()
         u = self.cred_user.text().strip()
         p = self.cred_pass.text().strip()
+        
         if u and p:
-            add_credential(self.db_path, u, p)
+            add_credential(self.db_path, u, p, host=h, service=s)
             self.cred_user.clear()
             self.cred_pass.clear()
+            # Optional: Clear host/service or keep for bulk entry? Keeping matches typical workflow better.
             self.refresh_creds_table()
+        else:
+            QMessageBox.warning(self, "Missing Info", "Username and Password are required.")
 
     def del_cred_handler(self):
         row = self.table_creds.currentRow()

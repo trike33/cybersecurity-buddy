@@ -544,6 +544,10 @@ class CyberSecBuddyApp(QMainWindow):
         self.base_path = os.path.dirname(os.path.abspath(__file__))
         self.icon_path = os.path.join(self.base_path, "resources", "img")
 
+        app_icon_path = os.path.join(self.icon_path, "app.png")
+        if os.path.exists(app_icon_path):
+            self.setWindowIcon(QIcon(app_icon_path))
+
         # Modules
         self.scan_control_tab = ScanControlWidget(self.working_directory, self.icon_path, project_db_path=self.project_db_path)
         self.terminal_tab = CustomCommandsWidget(self.working_directory, self.icon_path)
@@ -762,7 +766,12 @@ if __name__ == "__main__":
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     
     app = QApplication(sys.argv)
+
     command_db.initialize_db()
+
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "img", "app.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     while True:
         wizard = StartupWizard()

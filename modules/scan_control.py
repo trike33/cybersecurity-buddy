@@ -1,5 +1,6 @@
 import os
 import re
+import shlex
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QFileDialog, QMessageBox, QProgressBar, QInputDialog, QLineEdit
@@ -12,8 +13,6 @@ from utils import project_db
 from utils.worker import Worker
 from modules.background_tasks import BackgroundTasksDialog
 
-# --- FIX: Import the dialog ---
-# Assuming modules/dialogs.py exists based on previous context
 try:
     from modules.dialogs import CommandEditorDialog
 except ImportError:
@@ -50,14 +49,6 @@ class ScanControlWidget(QWidget):
         self.naabu_process.readyReadStandardError.connect(self.handle_naabu_stderr)
         self.naabu_process.finished.connect(self.handle_naabu_finished)
 
-        # --- Load Info from Project DB if available ---
-        if self.project_db_path:
-            self.load_project_info()
-        else:
-            possible_scope = os.path.join(self.working_directory, "scope.txt")
-            if os.path.exists(possible_scope):
-                self.scope_file_path = possible_scope
-
         # --- Main Layout ---
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(15)
@@ -81,16 +72,10 @@ class ScanControlWidget(QWidget):
             }
         """
 
-        self.lbl_target = QLabel(f"TARGET: {self.target_name if self.target_name else '[Not Set]'}")
+        self.lbl_target = QLabel(f"TARGET: [Not Set]")
         self.lbl_target.setStyleSheet(label_style)
         
-        scope_text = "[Not Set]"
-        if self.scope_file_path and os.path.exists(self.scope_file_path): 
-            scope_text = os.path.basename(self.scope_file_path)
-        elif self.project_db_path: 
-            scope_text = "Missing scope.txt"
-            
-        self.lbl_scope = QLabel(f"SCOPE: {scope_text}")
+        self.lbl_scope = QLabel(f"SCOPE: [Not Set]")
         self.lbl_scope.setStyleSheet(label_style)
         
         self.lbl_cwd = QLabel(f"CWD: {self.working_directory}")
@@ -182,6 +167,33 @@ class ScanControlWidget(QWidget):
         main_layout.addLayout(toolbar_layout)
 
         # ---------------------------------------------------------
+        # 2.5 NAABU PREVIEW BOX
+        # ---------------------------------------------------------
+        naabu_layout = QHBoxLayout()
+        naabu_layout.setSpacing(10)
+        
+        lbl_naabu = QLabel("Naabu Command:")
+        lbl_naabu.setStyleSheet("color: #ccc; font-weight: bold;")
+        
+        self.inp_naabu_cmd = QLineEdit()
+        self.inp_naabu_cmd.setPlaceholderText("naabu command will appear here...")
+        self.inp_naabu_cmd.setStyleSheet("""
+            QLineEdit {
+                background-color: #222; 
+                color: #00ff00; 
+                font-family: Consolas; 
+                border: 1px solid #444; 
+                padding: 8px;
+                border-radius: 4px;
+            }
+        """)
+        
+        naabu_layout.addWidget(lbl_naabu)
+        naabu_layout.addWidget(self.inp_naabu_cmd)
+        
+        main_layout.addLayout(naabu_layout)
+
+        # ---------------------------------------------------------
         # 3. PROGRESS BAR & TIMER
         # ---------------------------------------------------------
         progress_layout = QHBoxLayout()
@@ -234,27 +246,49 @@ class ScanControlWidget(QWidget):
         self.bg_monitor_timer.timeout.connect(self.monitor_background_tasks)
         self.bg_monitor_timer.start(5000)
 
-        self.update_log("[*] System Ready.")
+        # --- DATA LOADING (Moved to end to prevent AttributeError) ---
         if self.project_db_path:
+            self.load_project_info()
             self.update_log(f"[*] Loaded project database: {os.path.basename(self.project_db_path)}")
         else:
+            # Manual fallback
+            possible_scope = os.path.join(self.working_directory, "scope.txt")
+            if os.path.exists(possible_scope):
+                self.scope_file_path = possible_scope
+                self.lbl_scope.setText(f"SCOPE: {os.path.basename(possible_scope)}")
+                self.update_naabu_command_preview()
             self.update_log("[*] Manual Mode (No DB).")
 
     # --- Methods ---
     
+    def update_naabu_command_preview(self):
+        """Updates the Naabu command text box based on current scope."""
+        if self.scope_file_path:
+            scope_path = self.scope_file_path
+            out_path = os.path.join(self.working_directory, "naabu_out")
+            cmd = f"naabu -hL {scope_path} -ports full -exclude-ports 80,443,8080,8443 -o {out_path}"
+            self.inp_naabu_cmd.setText(cmd)
+        else:
+            self.inp_naabu_cmd.setText("naabu -list <SCOPE_FILE> -o naabu_out")
+
     def load_project_info(self):
         data = project_db.load_project_data(self.project_db_path)
         if data:
             self.target_name = data.get('client_name', '')
+            self.lbl_target.setText(f"TARGET: {self.target_name}") # Update Target UI
+            
             scope_path = os.path.join(self.working_directory, "scope.txt")
             if os.path.exists(scope_path):
                 self.scope_file_path = scope_path
+                self.lbl_scope.setText(f"SCOPE: {os.path.basename(scope_path)}") # Update Scope UI
             else:
                 self.scope_file_path = None
                 self.update_log("[!] scope.txt not found in project folder.")
+            
+            # Update the preview with the new scope path
+            self.update_naabu_command_preview()
 
     def open_command_editor(self):
-        # FIX: Check if class was imported successfully
         if CommandEditorDialog:
             dialog = CommandEditorDialog(self)
             dialog.exec_()
@@ -308,28 +342,34 @@ class ScanControlWidget(QWidget):
         return True
 
     def run_naabu_scan(self):
-        if not self.scope_file_path or not os.path.exists(self.scope_file_path):
-            QMessageBox.warning(self, "Missing Scope", "No scope.txt file found. Please configure the project.")
+        # 1. Get Command from Textbox
+        command_str = self.inp_naabu_cmd.text().strip()
+        if not command_str:
+            QMessageBox.warning(self, "Empty Command", "Please enter a valid command.")
             return
 
         if self.naabu_process.state() == QProcess.Running:
             QMessageBox.warning(self, "Busy", "A scan is already running.")
             return
 
+        # 2. Prompt for Password
         if not self.prompt_for_sudo_password():
             self.update_log("[!] Scan aborted: Sudo password required.")
             return
 
-        output_file = os.path.join(self.working_directory, "naabu_out")
-        
+        # 3. Parse and Prepare
+        if command_str.startswith("sudo "):
+            command_str = command_str[5:].strip()
+            
+        cmd_args = shlex.split(command_str)
         program = "sudo"
-        args = ["-S", "naabu", "-list", self.scope_file_path, "-o", output_file]
+        final_args = ["-S"] + cmd_args
         
-        cmd_display = f"sudo naabu -list {os.path.basename(self.scope_file_path)} -o naabu_out"
-        self.update_log(f"<br><span style='color: #6f42c1;'><b>[⚡] Starting Naabu Scan (Sudo)</b></span>")
-        self.update_log(f"Command: {cmd_display}")
+        self.update_log(f"<br><span style='color: #6f42c1;'><b>[⚡] Starting Custom Naabu Scan (Sudo)</b></span>")
+        self.update_log(f"Command: sudo {command_str}")
 
-        self.naabu_process.start(program, args)
+        # 4. Start Process
+        self.naabu_process.start(program, final_args)
         
         if self.naabu_process.waitForStarted():
             self.naabu_process.write((self.sudo_password + "\n").encode())
