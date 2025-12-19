@@ -1,0 +1,64 @@
+service,ports,attack_name,auth_required,dangerous
+smb,445,SMB Null Session,0,0
+smb,445,SMB Signing Disabled,0,0
+smb,445,SMB Relay,0,1
+smb,445,PsExec / Remote Execution,1,1
+smb,445,SAMR / LSA Dump (Registry Dump),1,1
+smb,445,NTLM Stealing (Forced Auth),0,1
+smb,445,SMB Brute Force,0,1
+smb,445,User Enumeration (RID Cycling),0,0
+smb,139,Service Name,0,0
+smb,135,Service Name,0,0
+ftp,21,Anonymous Login Allowed,0,0
+ftp,21,FTP Bounce Attack,0,1
+ftp,21,Cleartext Credential Sniffing,0,0
+ssh,22,SSH Key User Enumeration (Timing),0,0
+ssh,22,SSH User Enumeration (Public Key),0,0
+ssh,22,Weak Ciphers / MACs (Sweet32/Logjam),0,0
+telnet,23,Cleartext Credential Sniffing,0,0
+telnet,23,Telnet Negotiation Poisoning,0,1
+smtp,25,Open Relay,0,1
+smtp,25,User Enumeration (VRFY/EXPN),0,0
+smtp,25,Command Injection (RCPT TO),0,1
+smtp,25,STARTTLS Downgrade Attack,0,0
+dns,53,Zone Transfer (AXFR),0,0
+dns,53,DNS Cache Snooping,0,0
+dns,53,DNS Amplification (Recursion),0,1
+http,80,Directory Listing / Indexing,0,0
+http,80,HTTP Verb Tampering (PUT/DELETE),0,1
+http,80,WebDAV Misconfiguration,0,1
+http,80,HTTP Parameter Pollution,0,0
+http,80,Host Header Injection,0,0
+http,80,Slowloris DoS,0,1
+pop3,110,Cleartext Auth Sniffing,0,0
+rpc,135,RPC Dump / Enumeration,0,0
+rpc,135,IOXIDResolver (Interface Enum),0,0
+imap,143,Cleartext Auth Sniffing,0,0
+snmp,161,Public Community String (Enumeration),0,0
+snmp,161,Private Community String (RCE),0,1
+snmp,161,SNMP Bulkwalk DoS,0,1
+ldap,389,Anonymous Bind / Null Base DN,0,0
+ldap,389,LDAP Pass-back Attack,0,1
+https,443,Heartbleed (Memory Leak),0,1
+https,443,Shellshock (CGI),0,1
+https,443,POODLE / BEAST (Weak SSL/TLS),0,0
+rdp,3389,BlueKeep (RCE - if unpatched),0,1
+rdp,3389,RDP Session Hijacking,1,1
+rdp,3389,Man-in-the-Middle (Certificate Spoofing),0,1
+mssql,1433,xp_cmdshell Execution,1,1
+mssql,1433,SQL Injection (Protocol Level),0,1
+mysql,3306,UDF File Upload (RCE),1,1
+mysql,3306,Authentication Bypass (Type Conversion),0,1
+vnc,5900,VNC Auth Bypass (Zero Auth),0,1
+vnc,5900,Cleartext Clipboard Sniffing,0,0
+winrm,5985,Evil-WinRM (Pass-the-Hash),1,1
+winrm,5985,PowerShell Remoting RCE,1,1
+nfs,2049,Root Squash Misconfiguration,0,1
+nfs,2049,NFS Share Enumeration (showmount),0,0
+redis,6379,Unauthenticated Access (Write Key),0,1
+redis,6379,Redis RCE (Module Load),0,1
+mongodb,27017,NoSQL Injection,0,1
+mongodb,27017,Unauthenticated Access,0,1
+docker,2375,Unauthenticated Docker API (RCE),0,1
+k8s,6443,Anonymous API Access,0,1
+k8s,10250,Kubelet Anonymous RCE,0,1

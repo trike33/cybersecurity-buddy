@@ -9,13 +9,14 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QGraphicsView, QGraphicsScene
                              QPushButton, QMessageBox, QTableWidget, QTableWidgetItem,
                              QHeaderView, QLineEdit, QCheckBox, QStackedWidget, 
                              QGraphicsLineItem, QScrollArea, QComboBox, QSizePolicy,
-                             QTabWidget, QTextEdit)
+                             QTabWidget, QTextEdit, QFileDialog)
 from PyQt5.QtCore import Qt, QRectF, QPointF, QLineF
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QRadialGradient, QPolygonF, QGuiApplication
 
 # Import utilities
-from utils import attack_vectors_db
+from utils import attack_vectors_db, project_db
 from utils.enum_db_manager import EnumDBManager
+
 
 # ---------------------------------------------------------
 # 1. CUSTOM GRAPHICS COMPONENTS
@@ -443,7 +444,19 @@ class NodeDetailsDialog(QDialog):
         self.combo_service = QComboBox(); self.combo_service.addItem("All Services")
         self.combo_auth = QComboBox(); self.combo_auth.addItems(["All", "Auth Required", "No Auth Required"])
         self.combo_danger = QComboBox(); self.combo_danger.addItems(["All", "Dangerous Only", "Safe/Info"])
-        btn_apply = QPushButton("Apply Filters"); btn_apply.clicked.connect(self.refresh_views)
+        btn_apply = QPushButton("Apply Filters")
+        btn_apply.setStyleSheet("""
+            QPushButton {
+                background-color: #00d2ff;
+                color: #1e1e2f;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #33eaff;
+            }
+        """); btn_apply.clicked.connect(self.refresh_views)
         
         filter_layout.addWidget(QLabel("Service:"))
         filter_layout.addWidget(self.combo_service)
@@ -592,6 +605,7 @@ class AttackDataManager:
     def __init__(self, project_folder, attack_db_path=None):
         self.project_folder = project_folder
         self.network_db_path = os.path.join(project_folder, "network_information.db")
+        self.project_db_path = os.path.join(project_folder, "project_data.db") # Path to main project DB
         self.attack_db_path = attack_vectors_db.initialize_attack_db(attack_db_path)
 
     def network_db_exists(self):
@@ -623,6 +637,7 @@ class AttackDataManager:
 
         all_hosts = hosts.union(host_ports.keys())
         
+        # 1. Create/Update Network Map DB
         try:
             conn = sqlite3.connect(self.network_db_path)
             cur = conn.cursor()
@@ -633,8 +648,27 @@ class AttackDataManager:
                 cur.execute("INSERT OR REPLACE INTO hosts VALUES (?, ?, ?)", (host, ports, live))
             conn.commit()
             conn.close()
-            return True, "Success"
         except Exception as e: return False, str(e)
+
+        # 2. Populate 'enum' table in project_data.db
+        # We need to resolve port -> service using attack_vectors_db
+        enum_data = []
+        for host, ports in host_ports.items():
+            for port in ports:
+                # Cross-compare with attack_vectors.db to get Service Name
+                service_name, _ = attack_vectors_db.get_vectors_for_port(self.attack_db_path, port)
+                if service_name != "unknown":
+                    enum_data.append({
+                        'host': host,
+                        'port': port,
+                        'service': service_name
+                    })
+        
+        # Sync to Project DB
+        if os.path.exists(self.project_db_path):
+            project_db.sync_enum_data(self.project_db_path, enum_data)
+
+        return True, "Success"
 
     def get_all_hosts(self):
         nodes = []
@@ -728,6 +762,10 @@ class AttackVectorsWidget(QWidget):
         if f1 and f2:
             self.btn_create.setEnabled(True)
             self.lbl_status.setText("Files found: <span style='color:#0f0'>scope.txt, naabu_out</span>")
+        elif f1 or f2:
+            missing = "naabu_out" if f1 else "scope.txt"
+            self.btn_create.setEnabled(False)
+            self.lbl_status.setText(f"Missing: <span style='color:#f44'>{missing}</span>")
         else:
             self.btn_create.setEnabled(False)
             self.lbl_status.setText("Missing: <span style='color:#f44'>scope.txt or naabu_out</span>")

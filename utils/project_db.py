@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import datetime
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, 
                              QMessageBox, QLineEdit, QDateEdit, QHBoxLayout, QFormLayout, 
                              QTabWidget, QWidget, QTableWidget, QTableWidgetItem, QHeaderView)
@@ -11,7 +12,7 @@ def initialize_project_db(folder_path, db_filename="project_data.db"):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Table: Project Metadata
+    # 1. Project Metadata
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS project_info (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,7 +23,7 @@ def initialize_project_db(folder_path, db_filename="project_data.db"):
         )
     ''')
 
-    # Table: Scope / Domains
+    # 2. Scope / Domains
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS domains (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,7 +32,7 @@ def initialize_project_db(folder_path, db_filename="project_data.db"):
         )
     ''')
 
-    # NEW Table: Credentials (Updated with host/service)
+    # 3. Credentials
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS credentials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,33 +43,47 @@ def initialize_project_db(folder_path, db_filename="project_data.db"):
             service TEXT
         )
     ''')
-    
-    # Migration: Attempt to add columns if they don't exist (for existing DBs)
-    try:
-        cursor.execute("ALTER TABLE credentials ADD COLUMN host TEXT")
-    except sqlite3.OperationalError:
-        pass 
-    try:
-        cursor.execute("ALTER TABLE credentials ADD COLUMN service TEXT")
-    except sqlite3.OperationalError:
-        pass
+    try: cursor.execute("ALTER TABLE credentials ADD COLUMN host TEXT"); 
+    except: pass 
+    try: cursor.execute("ALTER TABLE credentials ADD COLUMN service TEXT"); 
+    except: pass
 
-    # Table: Scan Results
+    # 4. Enumeration Tracking
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS scan_results (
+        CREATE TABLE IF NOT EXISTS enum (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tool_name TEXT,
-            result_output TEXT,
+            host TEXT,
+            port TEXT,
+            service TEXT,
+            completed BOOLEAN DEFAULT 0,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # 5. NEW: Progress Tracking (High Level Steps)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS progress (
+            step TEXT PRIMARY KEY,
+            kind TEXT,
+            completed BOOLEAN DEFAULT 0
+        )
+    ''')
+
+    # Seed Default Progress Steps if empty
+    cursor.execute("SELECT count(*) FROM progress")
+    if cursor.fetchone()[0] == 0:
+        steps = [
+            ("Basic HTTP Check", "recon", 0),
+            ("Naabu Scan", "recon", 0),
+            ("Nmap Scan", "recon", 0)
+        ]
+        cursor.executemany("INSERT INTO progress (step, kind, completed) VALUES (?, ?, ?)", steps)
 
     conn.commit()
     conn.close()
     return db_path
 
 def save_project_details(db_path, client, eng_type, deadline, domain_list):
-    """Inserts the initial wizard data into the DB."""
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     c.execute("INSERT INTO project_info (client_name, engagement_type, deadline) VALUES (?, ?, ?)",
@@ -178,6 +193,119 @@ def is_valid_project_db(db_path):
     except:
         return False
 
+# --- ENUMERATION TRACKING ---
+
+def sync_enum_data(db_path, data_list):
+    if not os.path.exists(db_path): return
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    for item in data_list:
+        c.execute("SELECT id FROM enum WHERE host=? AND port=?", (item['host'], item['port']))
+        if not c.fetchone():
+            c.execute("INSERT INTO enum (host, port, service) VALUES (?, ?, ?)", (item['host'], item['port'], item['service']))
+    conn.commit(); conn.close()
+
+def enum_record_exists(db_path, host, service):
+    if not os.path.exists(db_path): return False
+    conn = sqlite3.connect(db_path); c = conn.cursor()
+    c.execute("SELECT 1 FROM enum WHERE host=? AND service=?", (host, service))
+    res = c.fetchone(); conn.close(); return res is not None
+
+def set_enum_status(db_path, host, service, completed):
+    if not os.path.exists(db_path): return
+    conn = sqlite3.connect(db_path); c = conn.cursor(); val = 1 if completed else 0
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("UPDATE enum SET completed=?, timestamp=? WHERE host=? AND service=?", (val, now, host, service))
+    conn.commit(); conn.close()
+
+def get_enum_status(db_path, host, service):
+    if not os.path.exists(db_path): return False
+    conn = sqlite3.connect(db_path); c = conn.cursor()
+    c.execute("SELECT completed FROM enum WHERE host=? AND service=?", (host, service))
+    row = c.fetchone(); conn.close(); return bool(row[0]) if row else False
+
+def get_unique_services(db_path):
+    if not os.path.exists(db_path): return []
+    conn = sqlite3.connect(db_path); c = conn.cursor()
+    c.execute("SELECT DISTINCT service FROM enum ORDER BY service ASC")
+    rows = [r[0] for r in c.fetchall() if r[0]]; conn.close(); return rows
+
+
+# --- PROGRESS & DASHBOARD HELPERS ---
+
+def mark_step_complete(db_path, step_name, completed=True):
+    """Marks a high-level step (Naabu, Nmap) as complete."""
+    if not os.path.exists(db_path): return
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    val = 1 if completed else 0
+    c.execute("UPDATE progress SET completed=? WHERE step=?", (val, step_name))
+    conn.commit()
+    conn.close()
+
+def get_dashboard_stats(db_path):
+    """Aggregates all data for the dashboard."""
+    stats = {
+        "client": "Unknown", "type": "Pentest", "deadline": "",
+        "scope_count": 0, "creds_count": 0,
+        "recon_steps": [], "enum_services": [],
+        "overall_progress": 0
+    }
+    
+    if not os.path.exists(db_path): return stats
+    
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    # 1. Info
+    c.execute("SELECT * FROM project_info ORDER BY id DESC LIMIT 1")
+    row = c.fetchone()
+    if row:
+        stats["client"] = row["client_name"]
+        stats["type"] = row["engagement_type"]
+        stats["deadline"] = row["deadline"]
+
+    # 2. Counts
+    c.execute("SELECT count(*) FROM domains")
+    stats["scope_count"] = c.fetchone()[0]
+    
+    c.execute("SELECT count(*) FROM credentials")
+    stats["creds_count"] = c.fetchone()[0]
+
+    # 3. Recon Progress
+    c.execute("SELECT step, completed FROM progress WHERE kind='recon'")
+    stats["recon_steps"] = [dict(r) for r in c.fetchall()]
+
+    # 4. Enumeration Progress (Aggregated by Service)
+    # We want to see how many services of each type are completed
+    # e.g. SSH: 2/5 completed
+    c.execute("SELECT service, count(*) as total, sum(completed) as done FROM enum GROUP BY service")
+    svc_rows = c.fetchall()
+    
+    total_tasks = len(stats["recon_steps"])
+    done_tasks = sum(1 for x in stats["recon_steps"] if x['completed'])
+    
+    for r in svc_rows:
+        svc_name = r['service']
+        total = r['total']
+        done = r['done'] if r['done'] else 0
+        stats["enum_services"].append({
+            "name": svc_name,
+            "total": total,
+            "done": done,
+            "percent": int((done/total)*100) if total > 0 else 0
+        })
+        
+        # Add to overall calculation
+        total_tasks += total
+        done_tasks += done
+
+    stats["overall_progress"] = int((done_tasks / total_tasks) * 100) if total_tasks > 0 else 0
+
+    conn.close()
+    return stats
+
 # ---------------------------------------------------------
 # EDITOR DIALOG
 # ---------------------------------------------------------
@@ -187,7 +315,7 @@ class ProjectEditDialog(QDialog):
         self.db_path = db_path
         self.project_dir = os.path.dirname(db_path)
         self.setWindowTitle("Edit Project Settings")
-        self.resize(850, 600)
+        self.resize(750, 600)
         self.setStyleSheet("""
             QDialog { background-color: #1e1e2f; color: white; }
             QLabel { font-size: 14px; color: #e0e0e0; font-weight: bold; }
@@ -217,11 +345,9 @@ class ProjectEditDialog(QDialog):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
-        # --- TAB 1: GENERAL (Meta + Files) ---
+        # TAB 1: GENERAL
         tab_general = QWidget()
         gen_layout = QVBoxLayout(tab_general)
-        
-        # Metadata
         meta_layout = QFormLayout()
         self.inp_client = QLineEdit()
         self.inp_deadline = QDateEdit()
@@ -230,86 +356,55 @@ class ProjectEditDialog(QDialog):
         meta_layout.addRow("Client Name:", self.inp_client)
         meta_layout.addRow("Deadline:", self.inp_deadline)
         gen_layout.addLayout(meta_layout)
-        
-        # Files
         gen_layout.addWidget(QLabel("Target Domains (domains.txt):"))
         self.txt_domains = QTextEdit()
         gen_layout.addWidget(self.txt_domains)
-        
         gen_layout.addWidget(QLabel("Scope / IP Ranges (scope.txt):"))
         self.txt_scope = QTextEdit()
         gen_layout.addWidget(self.txt_scope)
-        
         self.tabs.addTab(tab_general, "General Info")
 
-        # --- TAB 2: CREDENTIALS ---
+        # TAB 2: CREDENTIALS
         tab_creds = QWidget()
         cred_layout = QVBoxLayout(tab_creds)
-        
-        # Input Form
         form_cred = QHBoxLayout()
         self.cred_host = QLineEdit(); self.cred_host.setPlaceholderText("Host (IP/Domain)")
         self.cred_service = QLineEdit(); self.cred_service.setPlaceholderText("Service (e.g. smb, ssh)")
         self.cred_user = QLineEdit(); self.cred_user.setPlaceholderText("Username")
         self.cred_pass = QLineEdit(); self.cred_pass.setPlaceholderText("Password")
-        
-        btn_add_cred = QPushButton("Add")
-        btn_add_cred.setFixedWidth(80)
-        btn_add_cred.clicked.connect(self.add_cred_handler)
-        
-        form_cred.addWidget(self.cred_host)
-        form_cred.addWidget(self.cred_service)
-        form_cred.addWidget(self.cred_user)
-        form_cred.addWidget(self.cred_pass)
-        form_cred.addWidget(btn_add_cred)
+        btn_add_cred = QPushButton("Add"); btn_add_cred.setFixedWidth(80); btn_add_cred.clicked.connect(self.add_cred_handler)
+        form_cred.addWidget(self.cred_host); form_cred.addWidget(self.cred_service); form_cred.addWidget(self.cred_user); form_cred.addWidget(self.cred_pass); form_cred.addWidget(btn_add_cred)
         cred_layout.addLayout(form_cred)
-        
-        # Table
         self.table_creds = QTableWidget()
         self.table_creds.setColumnCount(5)
         self.table_creds.setHorizontalHeaderLabels(["ID", "Host", "Service", "Username", "Password"])
         self.table_creds.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_creds.setSelectionBehavior(QTableWidget.SelectRows)
         cred_layout.addWidget(self.table_creds)
-        
-        btn_del_cred = QPushButton("Delete Selected Credential")
-        btn_del_cred.clicked.connect(self.del_cred_handler)
+        btn_del_cred = QPushButton("Delete Selected Credential"); btn_del_cred.clicked.connect(self.del_cred_handler)
         cred_layout.addWidget(btn_del_cred)
-        
         self.tabs.addTab(tab_creds, "Credentials")
 
-        # --- BOTTOM BUTTONS ---
+        # BUTTONS
         btn_layout = QHBoxLayout()
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.clicked.connect(self.reject)
-        btn_save = QPushButton("Save All Changes")
-        btn_save.setObjectName("SaveBtn")
-        btn_save.clicked.connect(self.save_changes)
-        
-        btn_layout.addStretch()
-        btn_layout.addWidget(btn_cancel)
-        btn_layout.addWidget(btn_save)
+        btn_cancel = QPushButton("Cancel"); btn_cancel.clicked.connect(self.reject)
+        btn_save = QPushButton("Save All Changes"); btn_save.setObjectName("SaveBtn"); btn_save.clicked.connect(self.save_changes)
+        btn_layout.addStretch(); btn_layout.addWidget(btn_cancel); btn_layout.addWidget(btn_save)
         layout.addLayout(btn_layout)
 
     def load_data(self):
-        # General Data
         data = load_project_data(self.db_path)
         if data:
             self.inp_client.setText(data.get('client_name', ''))
             d_str = data.get('deadline', '')
             if d_str: self.inp_deadline.setDate(QDate.fromString(d_str, "yyyy-MM-dd"))
             else: self.inp_deadline.setDate(QDate.currentDate())
-
-        # Files
         dom_file = os.path.join(self.project_dir, "domains.txt")
         if os.path.exists(dom_file):
             with open(dom_file, 'r', encoding='utf-8') as f: self.txt_domains.setPlainText(f.read())
-        
         scope_file = os.path.join(self.project_dir, "scope.txt")
         if os.path.exists(scope_file):
             with open(scope_file, 'r', encoding='utf-8') as f: self.txt_scope.setPlainText(f.read())
-
-        # Credentials
         self.refresh_creds_table()
 
     def refresh_creds_table(self):
@@ -324,19 +419,11 @@ class ProjectEditDialog(QDialog):
             self.table_creds.setItem(i, 4, QTableWidgetItem(c['password']))
 
     def add_cred_handler(self):
-        h = self.cred_host.text().strip()
-        s = self.cred_service.text().strip()
-        u = self.cred_user.text().strip()
-        p = self.cred_pass.text().strip()
-        
+        h = self.cred_host.text().strip(); s = self.cred_service.text().strip(); u = self.cred_user.text().strip(); p = self.cred_pass.text().strip()
         if u and p:
             add_credential(self.db_path, u, p, host=h, service=s)
-            self.cred_user.clear()
-            self.cred_pass.clear()
-            # Optional: Clear host/service or keep for bulk entry? Keeping matches typical workflow better.
-            self.refresh_creds_table()
-        else:
-            QMessageBox.warning(self, "Missing Info", "Username and Password are required.")
+            self.cred_user.clear(); self.cred_pass.clear(); self.refresh_creds_table()
+        else: QMessageBox.warning(self, "Missing Info", "Username and Password are required.")
 
     def del_cred_handler(self):
         row = self.table_creds.currentRow()
@@ -346,25 +433,13 @@ class ProjectEditDialog(QDialog):
             self.refresh_creds_table()
 
     def save_changes(self):
-        # Metadata
-        new_client = self.inp_client.text().strip()
-        new_deadline = self.inp_deadline.date().toString("yyyy-MM-dd")
-        if not new_client:
-            QMessageBox.warning(self, "Error", "Client Name cannot be empty.")
-            return
-
+        new_client = self.inp_client.text().strip(); new_deadline = self.inp_deadline.date().toString("yyyy-MM-dd")
+        if not new_client: QMessageBox.warning(self, "Error", "Client Name cannot be empty."); return
         update_project_metadata(self.db_path, new_client, new_deadline)
         update_project_domains(self.db_path, self.txt_domains.toPlainText())
-
-        # Files
         try:
-            with open(os.path.join(self.project_dir, "domains.txt"), 'w', encoding='utf-8') as f:
-                f.write(self.txt_domains.toPlainText())
-            with open(os.path.join(self.project_dir, "scope.txt"), 'w', encoding='utf-8') as f:
-                f.write(self.txt_scope.toPlainText())
-        except Exception as e:
-            QMessageBox.critical(self, "File Error", f"Failed to write files: {str(e)}")
-            return
-
+            with open(os.path.join(self.project_dir, "domains.txt"), 'w', encoding='utf-8') as f: f.write(self.txt_domains.toPlainText())
+            with open(os.path.join(self.project_dir, "scope.txt"), 'w', encoding='utf-8') as f: f.write(self.txt_scope.toPlainText())
+        except Exception as e: QMessageBox.critical(self, "File Error", f"Failed to write files: {str(e)}"); return
         QMessageBox.information(self, "Success", "Project updated.")
         self.accept()

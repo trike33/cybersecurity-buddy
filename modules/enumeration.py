@@ -13,7 +13,6 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
 
-# Import the detached DB Manager
 from utils.enum_db_manager import EnumDBManager
 from utils import project_db
 
@@ -30,28 +29,20 @@ class EnumWorker(QThread):
         super().__init__()
         self.command_list = command_list
         self.working_dir = working_dir
-        self.save_path = save_path  # New: Path to save output
+        self.save_path = save_path
         self.is_running = True
 
     def _log_to_file(self, text):
-        """Helper to append text to the log file if enabled."""
         if not self.save_path: return
-        
-        # Strip HTML tags for the text file
         clean_text = re.sub(r'<[^>]+>', '', text).strip()
         if not clean_text: return
-        
         try:
             with open(self.save_path, 'a', encoding='utf-8') as f:
                 f.write(clean_text + '\n')
-        except Exception:
-            # Silently fail if file write fails to avoid crashing the thread
-            pass
+        except: pass
 
     def run(self):
         total = len(self.command_list)
-        
-        # If saving, add a session header
         if self.save_path:
             self._log_to_file(f"\n--- Enumeration Session Started ---")
 
@@ -59,12 +50,10 @@ class EnumWorker(QThread):
             if not self.is_running: break
             
             display_cmd = re.sub(r"echo '.*?' \| sudo -S", "echo '******' | sudo -S", cmd)
-            
             self.progress_update.emit(i, total)
             
-            # Log Header (HTML for UI, Clean for File)
-            html_header = f"<br><b><span style='color: #00d2ff;'>[*] Executing ({i+1}/{total}): {display_cmd}</span></b><br>"
-            self.log_output.emit(html_header)
+            header_html = f"<br><b><span style='color: #00d2ff;'>[*] Executing ({i+1}/{total}): {display_cmd}</span></b><br>"
+            self.log_output.emit(header_html)
             self._log_to_file(f"[*] Executing ({i+1}/{total}): {display_cmd}")
             
             try:
@@ -78,18 +67,17 @@ class EnumWorker(QThread):
                     if not self.is_running:
                         process.terminate()
                         break
-                    
-                    line_stripped = line.strip()
-                    self.log_output.emit(line_stripped)
-                    self._log_to_file(line_stripped)
+                    line = line.strip()
+                    self.log_output.emit(line)
+                    self._log_to_file(line)
                 
                 process.stdout.close()
                 process.wait()
                 
             except Exception as e:
-                err_msg = f"Error executing command: {str(e)}"
-                self.error.emit(err_msg)
-                self._log_to_file(f"[!] {err_msg}")
+                err = f"Error executing command: {str(e)}"
+                self.error.emit(err)
+                self._log_to_file(f"[!] {err}")
 
         self.progress_update.emit(total, total)
         if self.save_path:
@@ -102,7 +90,7 @@ class EnumWorker(QThread):
         self._log_to_file("[!] Stopping execution...")
 
 # ---------------------------------------------------------
-# 2. MAIN WIDGET
+# 2. ENUMERATION WIDGET
 # ---------------------------------------------------------
 class EnumerationWidget(QWidget):
     def __init__(self, working_directory, project_db_path=None, parent=None):
@@ -112,12 +100,12 @@ class EnumerationWidget(QWidget):
         self.db = EnumDBManager() 
         self.worker = None
         
-        # State storage
         self.input_fields = {} 
         self.list_targets = None 
         self.combo_creds = None 
         self.inp_user = None
         self.inp_pass = None
+        self.chk_completed = None 
 
         self.init_ui()
         
@@ -129,15 +117,13 @@ class EnumerationWidget(QWidget):
     def check_for_default_csv(self):
         default_csv = os.path.join("utils", "enumeration_commands.csv")
         if os.path.exists(default_csv):
-            success, msg = self.db.import_from_csv(default_csv)
-            if not success:
-                print(f"Failed to auto-load CSV: {msg}")
+            self.db.import_from_csv(default_csv)
 
     def init_ui(self):
         main_layout = QHBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
 
-        # --- PANE 1: SERVICES (Left) ---
+        # PANE 1: SERVICES
         pane_services = QWidget()
         layout_services = QVBoxLayout(pane_services)
         layout_services.setContentsMargins(0,0,0,0)
@@ -148,40 +134,21 @@ class EnumerationWidget(QWidget):
         
         self.list_services = QListWidget()
         self.list_services.setStyleSheet("""
-            QListWidget {
-                background-color: #1e1e2f;
-                border: 1px solid #4a4a5e;
-                border-radius: 8px;
-            }
-            QListWidget::item {
-                height: 60px;
-                color: #e0e0e0;
-                font-size: 16px;
-                font-weight: bold;
-                padding-left: 15px;
-                margin: 4px;
-                background-color: #2f2f40;
-                border-radius: 6px;
-            }
-            QListWidget::item:selected {
-                background-color: #00d2ff;
-                color: #15151b;
-            }
-            QListWidget::item:hover {
-                border: 1px solid #00d2ff;
-            }
+            QListWidget { background-color: #1e1e2f; border: 1px solid #4a4a5e; border-radius: 8px; }
+            QListWidget::item { height: 50px; color: #e0e0e0; font-size: 15px; font-weight: bold; padding-left: 10px; margin: 2px; background-color: #2f2f40; border-radius: 6px; }
+            QListWidget::item:selected { background-color: #00d2ff; color: #15151b; }
+            QListWidget::item:hover { border: 1px solid #00d2ff; }
         """)
         self.list_services.itemClicked.connect(self.on_service_selected)
         
         btn_import_csv = QPushButton("Import CSV")
         btn_import_csv.clicked.connect(self.import_csv_dialog)
-        btn_import_csv.setStyleSheet("padding: 10px;")
         
         layout_services.addWidget(lbl_serv)
         layout_services.addWidget(self.list_services)
         layout_services.addWidget(btn_import_csv)
 
-        # --- PANE 2: CONFIGURATION (Middle) ---
+        # PANE 2: CONFIGURATION
         pane_config_container = QWidget()
         layout_config_container = QVBoxLayout(pane_config_container)
         layout_config_container.setContentsMargins(0,0,0,0)
@@ -196,196 +163,110 @@ class EnumerationWidget(QWidget):
         self.layout_config.setContentsMargins(15, 0, 15, 0)
         self.layout_config.setSpacing(10)
 
-        # -- HEADER: Label + Execute Button --
+        # Header
         hbox_conf_header = QHBoxLayout()
-        
         lbl_conf = QLabel("2. CONFIGURE")
         lbl_conf.setFont(QFont("Arial", 12, QFont.Bold))
         lbl_conf.setStyleSheet("color: #00d2ff;")
-        
-        self.btn_execute = QPushButton("START")
+        self.btn_execute = QPushButton("EXECUTE COMMANDS")
         self.btn_execute.setCursor(Qt.PointingHandCursor)
         self.btn_execute.setFixedSize(180, 40)
         self.btn_execute.setStyleSheet("""
-            QPushButton { 
-                background-color: #28a745; color: white; 
-                font-weight: bold; font-size: 14px; 
-                border-radius: 5px; 
-            }
+            QPushButton { background-color: #28a745; color: white; font-weight: bold; font-size: 14px; border-radius: 5px; }
             QPushButton:hover { background-color: #38b755; }
         """)
         self.btn_execute.clicked.connect(self.start_execution)
-        
         hbox_conf_header.addWidget(lbl_conf)
         hbox_conf_header.addStretch()
         hbox_conf_header.addWidget(self.btn_execute)
-        
         self.layout_config.addLayout(hbox_conf_header)
 
-        # Execution Mode
+        # Status Tracker
+        gb_status = QGroupBox("Enumeration Status")
+        gb_status.setStyleSheet("QGroupBox { font-weight: bold; color: #aaa; border: 1px solid #4a4a5e; margin-top: 5px; }")
+        hbox_status = QHBoxLayout(gb_status)
+        self.chk_completed = QCheckBox("Mark Service as Completed for Selected Targets")
+        self.chk_completed.setStyleSheet("QCheckBox { font-size: 14px; color: #00ff00; font-weight: bold; spacing: 10px; }")
+        self.chk_completed.toggled.connect(self.on_status_toggled)
+        hbox_status.addWidget(self.chk_completed)
+        self.layout_config.addWidget(gb_status)
+
+        # Execution Mode (FIXED STYLING)
         gb_mode = QGroupBox("Execution Mode")
-        gb_mode.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; color: white; border: 1px solid #4a4a5e; margin-top: 5px; } QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px; }")
+        gb_mode.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; color: white; border: 1px solid #4a4a5e; }")
         vbox_mode = QVBoxLayout()
+        
         self.rb_sequence = QRadioButton("Sequence Mode (Run All)")
         self.rb_single = QRadioButton("Single Mode (Pick One)")
-        self.rb_sequence.setChecked(True)
-        self.rb_sequence.setStyleSheet("font-size: 14px; padding: 5px;")
-        self.rb_single.setStyleSheet("font-size: 14px; padding: 5px;")
         
+        # Explicitly style radio buttons to ensure visibility
+        rb_style = """
+            QRadioButton { color: #e0e0e0; font-size: 14px; padding: 5px; }
+            QRadioButton::indicator { width: 15px; height: 15px; border-radius: 7px; border: 2px solid #555; }
+            QRadioButton::indicator:checked { background-color: #00d2ff; border-color: #00d2ff; }
+        """
+        self.rb_sequence.setStyleSheet(rb_style)
+        self.rb_single.setStyleSheet(rb_style)
+        
+        self.rb_sequence.setChecked(True)
         self.rb_sequence.toggled.connect(self.update_command_list_view)
+        
         vbox_mode.addWidget(self.rb_sequence)
         vbox_mode.addWidget(self.rb_single)
         gb_mode.setLayout(vbox_mode)
+        self.layout_config.addWidget(gb_mode)
 
-        # Options
-        gb_opts = QGroupBox("Filters & Options")
-        gb_opts.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; color: white; border: 1px solid #4a4a5e; margin-top: 5px; }")
-        vbox_opts = QVBoxLayout()
-        
-        hbox_filters = QHBoxLayout()
-        combo_style = "QComboBox { background-color: #222; color: #00d2ff; border: 1px solid #444; padding: 4px; border-radius: 4px; } QComboBox::drop-down { border: none; }"
-        
-        self.combo_auth = QComboBox()
-        self.combo_auth.addItems(["All (Auth)", "Auth Required", "No Auth"])
-        self.combo_auth.setStyleSheet(combo_style)
-        self.combo_auth.currentIndexChanged.connect(self.update_command_list_view)
-        
-        self.combo_sudo = QComboBox()
-        self.combo_sudo.addItems(["All (Sudo)", "Sudo Required", "No Sudo"])
-        self.combo_sudo.setStyleSheet(combo_style)
-        self.combo_sudo.currentIndexChanged.connect(self.update_command_list_view)
-        
-        hbox_filters.addWidget(QLabel("Auth:", styleSheet="color: #ccc;"))
-        hbox_filters.addWidget(self.combo_auth)
-        hbox_filters.addWidget(QLabel("Sudo:", styleSheet="color: #ccc;"))
-        hbox_filters.addWidget(self.combo_sudo)
-        
+        # Filters
+        gb_opts = QGroupBox("Filters")
+        gb_opts.setStyleSheet("QGroupBox { font-size: 14px; font-weight: bold; color: white; border: 1px solid #4a4a5e; }")
+        hbox_filters = QHBoxLayout(gb_opts)
+        self.combo_auth = QComboBox(); self.combo_auth.addItems(["All (Auth)", "Auth Required", "No Auth"]); self.combo_auth.currentIndexChanged.connect(self.update_command_list_view)
+        self.combo_sudo = QComboBox(); self.combo_sudo.addItems(["All (Sudo)", "Sudo Required", "No Sudo"]); self.combo_sudo.currentIndexChanged.connect(self.update_command_list_view)
+        hbox_filters.addWidget(QLabel("Auth:")); hbox_filters.addWidget(self.combo_auth)
+        hbox_filters.addWidget(QLabel("Sudo:")); hbox_filters.addWidget(self.combo_sudo)
+        self.layout_config.addWidget(gb_opts)
+
+        # Sudo Password
         hbox_pw = QHBoxLayout()
-        lbl_pw = QLabel("Sudo Password:")
-        lbl_pw.setStyleSheet("font-size: 14px; color: #ccc;")
-        self.inp_root_pw = QLineEdit()
-        self.inp_root_pw.setEchoMode(QLineEdit.Password)
-        self.inp_root_pw.setPlaceholderText("Required if Sudo cmds present")
-        self.inp_root_pw.setStyleSheet("padding: 5px; color: #00d2ff; background-color: #222; border: 1px solid #444;")
+        self.inp_root_pw = QLineEdit(); self.inp_root_pw.setEchoMode(QLineEdit.Password); self.inp_root_pw.setPlaceholderText("Required if Sudo cmds present")
         self.inp_root_pw.textChanged.connect(self.update_preview_text)
-        
-        hbox_pw.addWidget(lbl_pw)
-        hbox_pw.addWidget(self.inp_root_pw)
-        
-        vbox_opts.addLayout(hbox_filters)
-        vbox_opts.addLayout(hbox_pw)
-        gb_opts.setLayout(vbox_opts)
+        hbox_pw.addWidget(QLabel("Sudo Password:")); hbox_pw.addWidget(self.inp_root_pw)
+        self.layout_config.addLayout(hbox_pw)
 
         # Command Queue
+        self.layout_config.addWidget(QLabel("Command Queue:", styleSheet="font-size:14px; font-weight:bold; margin-top:10px;"))
         self.list_commands = QListWidget()
         self.list_commands.setSelectionMode(QListWidget.SingleSelection)
-        self.list_commands.setMinimumHeight(200)
-        self.list_commands.setStyleSheet("""
-            QListWidget {
-                background-color: #1a1a25;
-                border: 1px solid #4a4a5e;
-                border-radius: 5px;
-            }
-            QListWidget::item {
-                height: 50px;
-                padding: 5px;
-                color: #ddd;
-                border-bottom: 1px solid #2a2a35;
-            }
-            QListWidget::item:selected {
-                background-color: #007acc;
-                color: white;
-            }
-            QListWidget::item:hover {
-                background-color: #2a2a35;
-            }
-        """)
+        self.list_commands.setMinimumHeight(150)
+        self.list_commands.setStyleSheet("QListWidget { background-color: #1a1a25; border: 1px solid #4a4a5e; border-radius: 5px; } QListWidget::item { padding: 5px; color: #ddd; border-bottom: 1px solid #2a2a35; } QListWidget::item:selected { background-color: #007acc; color: white; }")
         self.list_commands.itemClicked.connect(self.generate_variable_inputs)
-
-        # Variables Area
-        self.scroll_vars = QScrollArea()
-        self.scroll_vars.setWidgetResizable(True)
-        self.container_vars = QWidget()
-        self.layout_vars = QFormLayout(self.container_vars)
-        self.scroll_vars.setWidget(self.container_vars)
-        self.scroll_vars.setFixedHeight(250) 
-
-        lbl_preview = QLabel("Command Preview (About to run):")
-        lbl_preview.setStyleSheet("font-size: 14px; font-weight: bold; color: #aaa;")
-        
-        self.txt_preview = QTextEdit()
-        self.txt_preview.setReadOnly(True)
-        self.txt_preview.setFixedHeight(300) 
-        self.txt_preview.setStyleSheet("""
-            background-color: #101015; 
-            color: #00ff00; 
-            font-family: Consolas; 
-            font-size: 13px;
-            border: 1px solid #444;
-        """)
-
-        # Add all to config layout
-        self.layout_config.addWidget(gb_mode)
-        self.layout_config.addWidget(gb_opts)
-        self.layout_config.addWidget(QLabel("Command Queue:", styleSheet="font-size:14px; font-weight:bold;"))
         self.layout_config.addWidget(self.list_commands)
-        self.layout_config.addWidget(QLabel("Variables & Targets:", styleSheet="font-size:14px; font-weight:bold;"))
+
+        # Variables
+        self.layout_config.addWidget(QLabel("Variables & Targets:", styleSheet="font-size:14px; font-weight:bold; margin-top:10px;"))
+        self.scroll_vars = QScrollArea(); self.scroll_vars.setWidgetResizable(True)
+        self.container_vars = QWidget(); self.layout_vars = QFormLayout(self.container_vars)
+        self.scroll_vars.setWidget(self.container_vars); self.scroll_vars.setFixedHeight(220)
         self.layout_config.addWidget(self.scroll_vars)
-        self.layout_config.addWidget(lbl_preview)
+
+        # Preview
+        self.layout_config.addWidget(QLabel("Command Preview:", styleSheet="font-size: 14px; font-weight: bold; color: #aaa; margin-top:10px;"))
+        self.txt_preview = QTextEdit(); self.txt_preview.setReadOnly(True); self.txt_preview.setFixedHeight(200)
+        self.txt_preview.setStyleSheet("background-color: #101015; color: #00ff00; font-family: Consolas; font-size: 12px; border: 1px solid #444;")
         self.layout_config.addWidget(self.txt_preview)
-        # Note: btn_execute moved to top header
-        
+
         self.scroll_config.setWidget(self.config_content)
         layout_config_container.addWidget(self.scroll_config)
 
-        # --- PANE 3: OUTPUT (Right) ---
-        pane_output = QWidget()
-        layout_output = QVBoxLayout(pane_output)
-        layout_output.setContentsMargins(0,0,0,0)
-        
-        # Output Header with Save Controls
-        hbox_out_header = QHBoxLayout()
-        
-        lbl_out = QLabel("3. OUTPUT")
-        lbl_out.setFont(QFont("Arial", 12, QFont.Bold))
-        lbl_out.setStyleSheet("color: #00d2ff;")
-        
-        self.chk_save_output = QCheckBox("Save Output")
-        self.chk_save_output.setStyleSheet("color: #e0e0e0; font-weight: bold;")
-        
-        self.inp_save_filename = QLineEdit("enum_results.txt")
-        self.inp_save_filename.setPlaceholderText("Filename")
-        self.inp_save_filename.setFixedWidth(150)
-        self.inp_save_filename.setStyleSheet("background-color: #222; color: #00d2ff; border: 1px solid #444; padding: 2px;")
-        
-        hbox_out_header.addWidget(lbl_out)
-        hbox_out_header.addStretch()
-        hbox_out_header.addWidget(self.chk_save_output)
-        hbox_out_header.addWidget(self.inp_save_filename)
+        # PANE 3: OUTPUT
+        pane_output = QWidget(); layout_output = QVBoxLayout(pane_output); layout_output.setContentsMargins(0,0,0,0)
+        hbox_out_header = QHBoxLayout(); hbox_out_header.addWidget(QLabel("3. OUTPUT", styleSheet="font-family:Arial; font-size:12pt; font-weight:bold; color:#00d2ff;")); hbox_out_header.addStretch(); self.chk_save_output = QCheckBox("Save Output"); hbox_out_header.addWidget(self.chk_save_output); self.inp_save_filename = QLineEdit("enum_results.txt"); self.inp_save_filename.setPlaceholderText("Filename"); self.inp_save_filename.setFixedWidth(150); hbox_out_header.addWidget(self.inp_save_filename)
+        self.progress_bar = QProgressBar(); self.progress_bar.setStyleSheet("height: 10px;")
+        self.text_output = QTextEdit(); self.text_output.setReadOnly(True); self.text_output.setStyleSheet("background-color: #1e1e2f; color: #e0e0e0; font-family: Consolas; font-size: 13px;")
+        self.btn_stop = QPushButton("STOP"); self.btn_stop.setFixedHeight(40); self.btn_stop.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold;"); self.btn_stop.clicked.connect(self.stop_execution); self.btn_stop.setEnabled(False)
+        layout_output.addLayout(hbox_out_header); layout_output.addWidget(self.progress_bar); layout_output.addWidget(self.text_output); layout_output.addWidget(self.btn_stop)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setStyleSheet("height: 20px;")
-        
-        self.text_output = QTextEdit()
-        self.text_output.setReadOnly(True)
-        self.text_output.setStyleSheet("background-color: #1e1e2f; color: #e0e0e0; font-family: Consolas; font-size: 13px;")
-        
-        self.btn_stop = QPushButton("STOP")
-        self.btn_stop.setFixedHeight(40)
-        self.btn_stop.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold;")
-        self.btn_stop.clicked.connect(self.stop_execution)
-        self.btn_stop.setEnabled(False)
-
-        layout_output.addLayout(hbox_out_header)
-        layout_output.addWidget(self.progress_bar)
-        layout_output.addWidget(self.text_output)
-        layout_output.addWidget(self.btn_stop)
-
-        splitter.addWidget(pane_services)
-        splitter.addWidget(pane_config_container)
-        splitter.addWidget(pane_output)
-        splitter.setSizes([250, 450, 500])
-
+        splitter.addWidget(pane_services); splitter.addWidget(pane_config_container); splitter.addWidget(pane_output); splitter.setSizes([250, 500, 500])
         main_layout.addWidget(splitter)
 
     # ---------------------------------------------------------
@@ -394,59 +275,58 @@ class EnumerationWidget(QWidget):
     def import_csv_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import CSV", "", "CSV Files (*.csv)")
         if file_path:
-            success, msg = self.db.import_from_csv(file_path)
-            if success:
-                QMessageBox.information(self, "Success", msg)
-                self.load_services()
-            else:
-                QMessageBox.critical(self, "Error", msg)
+            self.db.import_from_csv(file_path)
+            self.load_services()
 
     def load_services(self):
         self.list_services.clear()
         services = self.db.get_services()
+        
+        found_services = []
+        if self.project_db_path:
+            found_services = project_db.get_unique_services(self.project_db_path)
+        
         for s in services:
-            self.list_services.addItem(s)
+            display = f"★ {s}" if s in found_services else s
+            self.list_services.addItem(display)
 
     def on_service_selected(self, item):
         self.update_command_list_view()
+        self.chk_completed.blockSignals(True)
+        self.chk_completed.setChecked(False)
+        self.chk_completed.blockSignals(False)
 
     def update_command_list_view(self):
-        selected_items = self.list_services.selectedItems()
-        if not selected_items: return
+        item = self.list_services.currentItem()
+        if not item: return
         
-        service = selected_items[0].text()
+        service = item.text().replace("★ ", "")
         
         auth_idx = self.combo_auth.currentIndex()
-        auth_map = {0: None, 1: 1, 2: 0}
-        auth_val = auth_map.get(auth_idx)
-
+        auth_val = {0: None, 1: 1, 2: 0}.get(auth_idx)
+        
         sudo_idx = self.combo_sudo.currentIndex()
-        sudo_map = {0: None, 1: 1, 2: 0}
-        sudo_val = sudo_map.get(sudo_idx)
+        sudo_val = {0: None, 1: 1, 2: 0}.get(sudo_idx)
 
         commands = self.db.get_commands(service, auth_filter=auth_val, sudo_filter=sudo_val)
         
         self.list_commands.clear()
-        
         for cmd in commands:
             prefix = ""
             if cmd['auth']: prefix += "[AUTH] "
             if cmd['sudo']: prefix += "[SUDO] "
             
-            title = f"{prefix}{cmd['title']}"
             snippet = cmd['command']
-            if len(snippet) > 60: snippet = snippet[:60] + "..."
-            display_text = f"{title}\n   > {snippet}"
+            if len(snippet) > 70: snippet = snippet[:70] + "..."
             
-            item = QListWidgetItem(display_text)
-            item.setToolTip(cmd['command'])
-            item.setData(Qt.UserRole, cmd)
-            self.list_commands.addItem(item)
+            w_item = QListWidgetItem(f"{prefix}{cmd['title']}\n   > {snippet}")
+            w_item.setToolTip(cmd['command'])
+            w_item.setData(Qt.UserRole, cmd)
+            self.list_commands.addItem(w_item)
 
         self.generate_variable_inputs()
 
     def generate_variable_inputs(self):
-        # Reset everything
         while self.layout_vars.count():
             child = self.layout_vars.takeAt(0)
             if child.widget(): child.widget().deleteLater()
@@ -459,20 +339,18 @@ class EnumerationWidget(QWidget):
         
         raw_cmd_data = []
         if self.rb_single.isChecked():
-            current_item = self.list_commands.currentItem()
-            if current_item:
-                raw_cmd_data.append(current_item.data(Qt.UserRole))
+            curr = self.list_commands.currentItem()
+            if curr: raw_cmd_data.append(curr.data(Qt.UserRole))
         else:
             for i in range(self.list_commands.count()):
                 raw_cmd_data.append(self.list_commands.item(i).data(Qt.UserRole))
 
         needed_vars = set()
         for data in raw_cmd_data:
-            text = data['command']
-            matches = re.findall(r'\{([\w_-]+)\}', text)
+            matches = re.findall(r'\{([\w_-]+)\}', data['command'])
             for m in matches: needed_vars.add(m)
 
-        # --- 1. Target (Multi-Select) Logic ---
+        # 1. Targets
         target_vars = {'IP', 'Target', 'Domain', 'Domain_Name'}
         needed_lower = {v.lower() for v in needed_vars}
         is_target_needed = any(t.lower() in needed_lower for t in target_vars)
@@ -487,7 +365,6 @@ class EnumerationWidget(QWidget):
             self.list_targets.setFixedHeight(120)
             self.list_targets.setStyleSheet("background-color: #222; color: white;")
             
-            # Load from scope.txt
             scope_path = os.path.join(self.working_directory, "scope.txt")
             if os.path.exists(scope_path):
                 with open(scope_path, 'r') as f:
@@ -497,86 +374,63 @@ class EnumerationWidget(QWidget):
             self.list_targets.itemSelectionChanged.connect(self.on_targets_changed)
             self.layout_vars.addRow(self.list_targets)
 
-        # --- 2. Credential Logic ---
+        # 2. Credentials
         cred_vars = {'Username', 'Password', 'User', 'Pass'}
         is_cred_needed = any(c.lower() in needed_lower for c in cred_vars)
         
         if is_cred_needed:
-            lbl_c = QLabel("Select Credential:")
-            lbl_c.setStyleSheet("font-weight: bold; color: #00d2ff;")
-            
+            self.layout_vars.addRow(QLabel("Select Credential:", styleSheet="font-weight: bold; color: #00d2ff;"))
             self.combo_creds = QComboBox()
             self.combo_creds.addItem("Manual / None", None)
-            self.combo_creds.setStyleSheet("background-color: #222; color: white; padding: 5px;")
             self.combo_creds.currentIndexChanged.connect(self.on_cred_selected)
-            self.layout_vars.addRow(lbl_c, self.combo_creds)
+            self.layout_vars.addRow(self.combo_creds)
             
-            # Add line edits for visual confirmation / manual override
-            self.inp_user = QLineEdit()
-            self.inp_user.setPlaceholderText("{Username}")
-            self.inp_pass = QLineEdit()
-            self.inp_pass.setPlaceholderText("{Password}")
-            self.inp_pass.setEchoMode(QLineEdit.Password)
-            
-            self.input_fields['Username'] = self.inp_user
-            self.input_fields['Password'] = self.inp_pass
-            
-            self.inp_user.textChanged.connect(self.update_preview_text)
-            self.inp_pass.textChanged.connect(self.update_preview_text)
-            
+            self.inp_user = QLineEdit(); self.inp_user.setPlaceholderText("{Username}"); self.inp_user.textChanged.connect(self.update_preview_text)
+            self.inp_pass = QLineEdit(); self.inp_pass.setPlaceholderText("{Password}"); self.inp_pass.setEchoMode(QLineEdit.Password); self.inp_pass.textChanged.connect(self.update_preview_text)
             self.layout_vars.addRow("Username:", self.inp_user)
             self.layout_vars.addRow("Password:", self.inp_pass)
             
             self.filter_credentials_by_target([])
 
-        # --- 3. Other Generic Vars ---
+        # 3. Generic
         handled = {'ip', 'target', 'domain', 'domain_name', 'username', 'password', 'user', 'pass'}
-        
         for var in sorted(list(needed_vars)):
             if var.lower() in handled: continue
-            
-            line_edit = QLineEdit()
-            line_edit.setPlaceholderText(f"Value for {var}")
-            line_edit.setStyleSheet("padding: 5px; font-size: 13px;")
-            line_edit.textChanged.connect(self.update_preview_text)
-            
-            lbl = QLabel(f"{var}:")
-            lbl.setStyleSheet("font-size: 13px; font-weight: bold;")
-            
-            self.layout_vars.addRow(lbl, line_edit)
-            self.input_fields[var] = line_edit
+            le = QLineEdit()
+            le.setPlaceholderText(f"Value for {var}")
+            le.textChanged.connect(self.update_preview_text)
+            self.layout_vars.addRow(QLabel(f"{var}:", styleSheet="font-weight:bold;"), le)
+            self.input_fields[var] = le
         
         self.update_preview_text()
 
     def on_targets_changed(self):
+        selected_ips = []
+        if self.list_targets:
+            selected_ips = [i.text() for i in self.list_targets.selectedItems()]
+        
         if self.combo_creds:
-            selected_items = self.list_targets.selectedItems()
-            selected_ips = [i.text() for i in selected_items]
             self.filter_credentials_by_target(selected_ips)
         
+        self.update_status_checkbox(selected_ips)
         self.update_preview_text()
 
     def filter_credentials_by_target(self, selected_ips):
         if not self.project_db_path: return
-        
         self.combo_creds.blockSignals(True)
         self.combo_creds.clear()
         self.combo_creds.addItem("Manual / None", None)
         
         all_creds = project_db.get_credentials(self.project_db_path)
-        
         filtered = []
         for c in all_creds:
             host = c.get('host', '').strip()
-            if not host: 
-                filtered.append(c) 
-            elif host in selected_ips:
-                filtered.append(c) 
+            if not host: filtered.append(c)
+            elif host in selected_ips: filtered.append(c)
         
         for c in filtered:
             display = f"{c['username']} @ {c.get('host','*')} ({c.get('service','')})"
             self.combo_creds.addItem(display, c)
-            
         self.combo_creds.blockSignals(False)
 
     def on_cred_selected(self):
@@ -586,137 +440,138 @@ class EnumerationWidget(QWidget):
             self.inp_pass.setText(data['password'])
         self.update_preview_text()
 
-    def update_preview_text(self):
-        commands, _ = self.prepare_commands_and_validate(show_errors=False, is_preview=True)
+    def update_status_checkbox(self, selected_ips):
+        if not self.project_db_path or not self.list_services.currentItem(): return
+        service = self.list_services.currentItem().text().replace("★ ", "")
         
-        if not commands:
-            self.txt_preview.setText("-- No commands selected or queue empty --")
-            return
+        if not selected_ips:
+            self.chk_completed.setChecked(False); return
 
+        all_done = True
+        for ip in selected_ips:
+            if not project_db.get_enum_status(self.project_db_path, ip, service):
+                all_done = False; break
+        
+        self.chk_completed.blockSignals(True)
+        self.chk_completed.setChecked(all_done)
+        self.chk_completed.blockSignals(False)
+
+    def on_status_toggled(self, checked):
+        if not self.project_db_path or not self.list_targets: return
+        service = self.list_services.currentItem().text().replace("★ ", "")
+        selected_ips = [i.text() for i in self.list_targets.selectedItems()]
+        
+        if not selected_ips:
+            self.chk_completed.setChecked(False); return
+
+        if checked:
+            # CHECK IF THREAT MODELING WAS DONE (Record Exists)
+            missing_hosts = []
+            for ip in selected_ips:
+                if not project_db.enum_record_exists(self.project_db_path, ip, service):
+                    missing_hosts.append(ip)
+            
+            if missing_hosts:
+                msg = f"Cannot mark as completed for {len(missing_hosts)} target(s):\n{', '.join(missing_hosts)}\n\nThreat Modeling has not populated these services yet. Please run Threat Modeling first."
+                QMessageBox.warning(self, "Missing Enumeration Data", msg)
+                self.chk_completed.blockSignals(True)
+                self.chk_completed.setChecked(False)
+                self.chk_completed.blockSignals(False)
+                return
+
+        for ip in selected_ips:
+            project_db.set_enum_status(self.project_db_path, ip, service, checked)
+
+    def update_preview_text(self):
+        commands, _ = self.prepare_commands(show_errors=False, is_preview=True)
+        if not commands:
+            self.txt_preview.setText("-- No commands selected or targets missing --")
+            return
+        
         html_out = ""
         for i, cmd in enumerate(commands):
-            safe_cmd = html.escape(cmd)
-            if "sudo" in safe_cmd:
-                safe_cmd = safe_cmd.replace("sudo", "<span style='color:#ff5555; font-weight:bold;'>sudo</span>")
-            
-            row_html = f"""
-            <div style="background-color:#1e1e2f; margin-bottom:8px; padding:8px; border-left: 4px solid #00d2ff;">
-                <span style="color:#888; font-weight:bold;">#{i+1}</span> 
-                <span style="font-family:Consolas; color:#aaddff; font-size:14px;">{safe_cmd}</span>
-            </div>
-            """
-            html_out += row_html
-        
+            safe = html.escape(cmd)
+            if "sudo" in safe: safe = safe.replace("sudo", "<span style='color:#ff5555;font-weight:bold;'>sudo</span>")
+            html_out += f"<div style='margin-bottom:5px; border-left:3px solid #00d2ff; padding-left:5px;'><b>#{i+1}</b> <span style='font-family:Consolas; color:#aaddff;'>{safe}</span></div>"
         self.txt_preview.setHtml(html_out)
 
-    def prepare_commands_and_validate(self, show_errors=True, is_preview=False):
-        # 1. Gather Raw Commands
-        cmd_data_list = []
+    def prepare_commands(self, show_errors=True, is_preview=False):
+        cmd_data = []
         if self.rb_single.isChecked():
             item = self.list_commands.currentItem()
             if not item: return [], False
-            cmd_data_list.append(item.data(Qt.UserRole))
+            cmd_data.append(item.data(Qt.UserRole))
         else:
-            if self.list_commands.count() == 0: return [], False
             for i in range(self.list_commands.count()):
-                cmd_data_list.append(self.list_commands.item(i).data(Qt.UserRole))
+                cmd_data.append(self.list_commands.item(i).data(Qt.UserRole))
 
-        final_commands = []
-        missing_vars = []
-        root_pw = self.inp_root_pw.text().strip()
-
-        # 2. Determine Targets (List of strings)
         targets = []
         if self.list_targets:
             items = self.list_targets.selectedItems()
             targets = [i.text() for i in items]
-            if not targets and is_preview: 
-                targets = ["{TARGET}"] 
-            elif not targets:
-                if show_errors: QMessageBox.warning(self, "No Target", "Please select at least one target IP.")
-                return [], False
+            if not targets:
+                if is_preview: targets = ["{TARGET}"]
+                elif show_errors:
+                    QMessageBox.warning(self, "No Target", "Select at least one target."); return [], False
         else:
             targets = [""]
 
-        # 3. Build Commands Loop
-        for target_val in targets:
-            for data in cmd_data_list:
-                processed_cmd = data['command']
-                needs_sudo = data['sudo']
+        final_cmds = []
+        missing_vars = []
+        root_pw = self.inp_root_pw.text().strip()
+
+        for target in targets:
+            for data in cmd_data:
+                cmd = data['command']
                 
-                # Sudo Logic
-                if needs_sudo:
-                    if not root_pw:
-                        if not is_preview:
-                            if show_errors: QMessageBox.warning(self, "Sudo Required", "Root Password Required.")
-                            return [], False
-                        else:
-                            if not processed_cmd.strip().startswith("sudo"): processed_cmd = f"sudo {processed_cmd}"
-                    else:
-                        if processed_cmd.strip().startswith("sudo"):
-                            processed_cmd = re.sub(r'^sudo\s+', '', processed_cmd)
-                        if is_preview:
-                            processed_cmd = f"echo '******' | sudo -S {processed_cmd}"
-                        else:
-                            processed_cmd = f"echo '{root_pw}' | sudo -S {processed_cmd}"
-
-                # Variable Substitution
-                req_vars = re.findall(r'\{([\w_-]+)\}', processed_cmd)
-                for var in req_vars:
-                    var_lower = var.lower()
+                if data['sudo']:
+                    if not root_pw and not is_preview:
+                        if show_errors: QMessageBox.warning(self, "Sudo", "Root Password Required."); return [], False
                     
-                    if var_lower in ['ip', 'target', 'domain', 'domain_name']:
-                        processed_cmd = processed_cmd.replace(f"{{{var}}}", target_val)
-                        continue
+                    if cmd.strip().startswith("sudo"): cmd = re.sub(r'^sudo\s+', '', cmd)
                     
-                    if var_lower in ['username', 'user'] and self.inp_user:
-                        val = self.inp_user.text()
-                        if val: processed_cmd = processed_cmd.replace(f"{{{var}}}", val)
-                        elif not is_preview: missing_vars.append(var)
-                        continue
-                        
-                    if var_lower in ['password', 'pass'] and self.inp_pass:
-                        val = self.inp_pass.text()
-                        if val: processed_cmd = processed_cmd.replace(f"{{{var}}}", val)
-                        elif not is_preview: missing_vars.append(var)
-                        continue
+                    if is_preview: cmd = f"echo '******' | sudo -S {cmd}"
+                    else: cmd = f"echo '{root_pw}' | sudo -S {cmd}"
 
-                    if var in self.input_fields:
-                        val = self.input_fields[var].text().strip()
-                        if val: processed_cmd = processed_cmd.replace(f"{{{var}}}", val)
-                        elif not is_preview: missing_vars.append(var)
+                reqs = re.findall(r'\{([\w_-]+)\}', cmd)
+                for var in reqs:
+                    vlow = var.lower()
+                    val = None
+                    
+                    if vlow in ['ip', 'target', 'domain', 'domain_name']: val = target
+                    elif vlow in ['user', 'username'] and self.inp_user: val = self.inp_user.text()
+                    elif vlow in ['pass', 'password'] and self.inp_pass: val = self.inp_pass.text()
+                    elif var in self.input_fields: val = self.input_fields[var].text().strip()
+                    
+                    if val: cmd = cmd.replace(f"{{{var}}}", val)
+                    elif not is_preview: missing_vars.append(var)
 
-                final_commands.append(processed_cmd)
+                final_cmds.append(cmd)
 
-        if missing_vars and not is_preview:
-            if show_errors:
-                QMessageBox.warning(self, "Missing Input", f"Please fill: {', '.join(set(missing_vars))}")
+        if missing_vars:
+            if show_errors: QMessageBox.warning(self, "Missing Input", f"Please fill: {', '.join(set(missing_vars))}")
             return [], False
-            
-        return final_commands, True
+
+        return final_cmds, True
 
     def start_execution(self):
         if self.worker and self.worker.isRunning(): return
+        
+        cmds, ok = self.prepare_commands(show_errors=True)
+        if not ok or not cmds: return
 
-        final_commands, is_valid = self.prepare_commands_and_validate(show_errors=True, is_preview=False)
-        if not is_valid or not final_commands: return
-
-        # Check Output Saving
         save_path = None
         if self.chk_save_output.isChecked():
-            filename = self.inp_save_filename.text().strip()
-            if filename:
-                save_path = os.path.join(self.working_directory, filename)
-            else:
-                QMessageBox.warning(self, "Save Error", "Please enter a filename.")
-                return
+            fname = self.inp_save_filename.text().strip()
+            if not fname: QMessageBox.warning(self, "Error", "Enter output filename."); return
+            save_path = os.path.join(self.working_directory, fname)
 
         self.text_output.clear()
         self.btn_execute.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.progress_bar.setValue(0)
         
-        self.worker = EnumWorker(final_commands, self.working_directory, save_path=save_path)
+        self.worker = EnumWorker(cmds, self.working_directory, save_path)
         self.worker.log_output.connect(self.text_output.append)
         self.worker.progress_update.connect(lambda c, t: self.progress_bar.setValue(int((c/t)*100)) if t > 0 else 0)
         self.worker.finished.connect(self.on_finished)

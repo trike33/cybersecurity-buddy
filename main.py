@@ -525,6 +525,7 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.attack_vectors import AttackVectorsWidget
         from modules.enumeration import EnumerationWidget
         from modules.c2 import C2Widget
+        from modules.dashboard import DashboardWidget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
@@ -561,10 +562,12 @@ class CyberSecBuddyApp(QMainWindow):
         # UPDATED: Pass project_db_path to EnumerationWidget
         self.enumeration_tab = EnumerationWidget(self.working_directory, project_db_path=self.project_db_path)
         self.c2_tab = C2Widget(self.working_directory)
+        self.dashboard_tab = DashboardWidget(self.project_db_path)
+       
+        self.bruteforce_widget = QLabel("Brute Force Tools (Coming Soon)")
+        self.bruteforce_widget.setAlignment(Qt.AlignCenter)
 
-        self.enumeration_widget = QLabel("Enumeration Tools")
-        self.enumeration_widget.setAlignment(Qt.AlignCenter)
-        self.exploiting_widget = QLabel("Exploitation Framework")
+        self.exploiting_widget = QLabel("Exploitation Framework (Use C2 Tab for shells)")
         self.exploiting_widget.setAlignment(Qt.AlignCenter)
 
         if self.engagement_type == "Pentest":
@@ -677,16 +680,18 @@ class CyberSecBuddyApp(QMainWindow):
         sidebar_layout.setSpacing(0)
 
         self.content_stack = QStackedWidget()
-        self.content_stack.addWidget(self.scan_control_tab) 
+        self.content_stack.addWidget(self.scan_control_tab)
+        self.content_stack.addWidget(self.attack_vectors_widget) 
         self.content_stack.addWidget(self.enumeration_tab)
         self.content_stack.addWidget(self.playground_tab)
-        self.content_stack.addWidget(self.attack_vectors_widget)
         self.content_stack.addWidget(self.exploiting_widget)
-        self.content_stack.addWidget(self.report_tab)
+        self.content_stack.addWidget(self.bruteforce_widget)
         self.content_stack.addWidget(self.c2_tab)
+        self.content_stack.addWidget(self.report_tab)
+        self.content_stack.addWidget(self.dashboard_tab)
 
         self.sidebar_btns = []
-        labels = ["Scan Control", "Enumeration", "Playground", "Threat Modeling", "Exploiting", " Reporting", "C2 / Listeners"]
+        labels = ["Scan Control", "Threat Modeling", "Enumeration", "Playground", "Exploiting", " Bruteforce", "C2 / Listeners", "Reporting", "Dashboard"]
         for i, label in enumerate(labels):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -703,6 +708,10 @@ class CyberSecBuddyApp(QMainWindow):
         self.content_stack.setCurrentIndex(index)
         for i, btn in enumerate(self.sidebar_btns):
             btn.setChecked(i == index)
+
+        # REFRESH DASHBOARD ON CLICK
+        if index == 0:
+            self.dashboard_tab.refresh_view()
 
     def restart_to_wizard(self):
         self.restart_requested = True

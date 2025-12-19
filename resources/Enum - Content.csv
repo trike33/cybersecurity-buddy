@@ -1,0 +1,52 @@
+title,command,auth,sudo,service
+Guest session,smbmap -H {IP},0,0,smb
+Guest session,smbmap -H {IP} -u null -p null,0,0,smb
+Guest session,smbmap -H {IP} -u guest,0,0,smb
+Guest session,smbclient -N -L //{IP},0,0,smb
+Guest session,"smbclient -N //{IP}/ --option=""client min protocol""=LANMAN1",0,0,smb
+Guest session,rpcclient {IP},0,0,smb
+Guest session,"rpcclient -U """" {IP}",0,0,smb
+Guest session,crackmapexec smb {IP},0,0,smb
+Guest session,"crackmapexec smb {IP} --pass-pol -u """" -p """"",0,0,smb
+Guest session,"crackmapexec smb {IP} --pass-pol -u ""guest"" -p """"",0,0,smb
+,"GetADUsers.py -dc-ip {IP} ""{Domain_Name}/"" -all",0,0,smb
+ASP Rep Roast (AD),"GetNPUsers.py -dc-ip {IP} -request ""{Domain_Name}/"" -format hashcat",0,0,smb
+Kerberoasting (AD),"GetUserSPNs.py -dc-ip {IP} -request ""{Domain_Name}/""",0,0,smb
+,getArch.py -target {IP},0,0,smb
+SMB Vuln scan with nmap,"nmap -p 139,445 -vv -Pn --script=smb-vuln-cve2009-3103.nse,smb-vuln-ms06-025.nse,smb-vuln-ms07-029.nse,smb-vuln-ms08-067.nse,smb-vuln-ms10-054.nse,smb-vuln-ms10-061.nse,smb-vuln-ms17-010.nse {IP}",0,1,smb
+General SMB scan,enum4linux -a {IP},0,1,smb
+Nmap Scan 2,"nmap --script 'smb-vuln*' -Pn -p 139,445 {IP}",0,1,smb
+Search for msf exploits,search type:exploit platform:windows target:2008 smb,0,0,smb
+Search ExploitDB,searchsploit microsoft smb,0,0,smb
+Shares Listing,smbmap -H {IP} -u {Username} -p {Password},1,0,smb
+Shares Listing,"smbclient ""\\\\{IP}\\"" -U {Username} -W {Domain_Name} -l {IP}",1,0,smb
+Shares Listing,"smbclient ""\\\\{IP}\\"" -U {Username} -W {Domain_Name} -l {IP} --pw-nt-hash {NT_hash}",1,0,smb
+Shares Listing,crackmapexec smb {IP} -u {Username} -p {Password} --shares,1,0,smb
+Shares Listing,GetADUsers.py {Domain_Name}/{Username}:{Password} -all,1,0,smb
+ASP Rep Roast (AD),GetNPUsers.py {Domain_Name}/{Username}:{Password} -request -format hashcat,1,0,smb
+Kerberoasting (AD),GetUserSPNs.py {Domain_Name}/{Username}:{Password} -request,1,0,smb
+FTP nmap scan,nmap --script ftp-* -p 21 <ip>,0,1,ftp
+Download all files (anonymous),wget -m ftp://anonymous:anonymous@10.10.10.98,0,0,ftp
+Download all files (anonymous),wget -m --no-passive ftp://anonymous:anonymous@10.10.10.98,0,0,ftp
+Download all files (creds),"wget -r --user=""USERNAME"" --password=""PASSWORD"" ftp://server.com/",1,0,ftp
+Banner grab,telnet -n {IP} 21,0,0,ftp
+Cert grab,openssl s_client -connect {IP}:21 -starttls ftp,0,0,ftp
+Banner grab,nc -vn <IP> 22,0,0,ssh
+nmap Scan,nmap -p22 <ip> -sC,0,1,ssh
+nmap scan,"nmap -n -sV -Pn --script ""*telnet*"" -p 23 {IP}",0,1,telnet
+Banner grab,nc -vn {IP} 25,0,0,smtp
+vuln scan,"nmap --script=smtp-commands,smtp-enum-users,smtp-vuln-cve2010-4344,smtp-vuln-cve2011-1720,smtp-vuln-cve2011-1764 -p 25 {IP}",0,1,smtp
+Find MX Servers,dig +short mx {Domain_Name},0,0,smtp
+Banner grab,whois -h {IP} -p 43 {Domain_Name} && echo {Domain_Name} | nc -vn {IP} 43,0,0,whois
+dns recon,dnsrecon -r 127.0.0.0/24 -n {IP} -d {Domain_Name},0,0,dns
+AXFR attack,dig axfr @{IP},0,0,dns
+AXFR attack,dig axfr {Domain_Name} @{IP},0,0,dns
+Nmap Scan,"nmap -n --script ""(default and *dns*) or fcrdns or dns-srv-enum or dns-random-txid or dns-random-srcport"" {IP}",0,1,dns
+Enumerate DC via DNS,"dig -t _gc._{Domain_Name} && dig -t _ldap._{Domain_Name} && dig -t _kerberos._{Domain_Name} && dig -t _kpasswd._{Domain_Name} && nmap --script dns-srv-enum --script-args ""dns-srv-enum.domain={Domain_Name}""",0,0,dns
+SNMP Check,snmp-check {IP},0,0,snmp
+Nmap (no brute),"nmap --script ""snmp* and not snmp-brute"" {IP}",0,1,snmp
+banner grab,nmap -p 389 --script ldap-search -Pn {IP},0,1,ldap
+base ldapsearch,ldapsearch -H ldap://{IP} -x,0,0,ldap
+ldap naming context dump,ldapsearch -H ldap://{IP} -x -s base namingcontexts,0,0,ldap
+nmap scan,"nmap --script=nfs-ls.nse,nfs-showmount.nse,nfs-statfs.nse -p 2049 {IP}",0,1,nfs
+nmap scan,"nmap --script=mysql-databases.nse,mysql-empty-password.nse,mysql-enum.nse,mysql-info.nse,mysql-variables.nse,mysql-vuln-cve2012-2122.nse {IP} -p 3306",0,1,mysql
