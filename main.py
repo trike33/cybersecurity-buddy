@@ -526,6 +526,8 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.enumeration import EnumerationWidget
         from modules.c2 import C2Widget
         from modules.dashboard import DashboardWidget
+        from modules.bruteforce import BruteForceWidget
+        from modules.msf_console import ExploitFrameworkWidget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
@@ -564,11 +566,9 @@ class CyberSecBuddyApp(QMainWindow):
         self.c2_tab = C2Widget(self.working_directory)
         self.dashboard_tab = DashboardWidget(self.project_db_path)
        
-        self.bruteforce_widget = QLabel("Brute Force Tools (Coming Soon)")
-        self.bruteforce_widget.setAlignment(Qt.AlignCenter)
+        self.bruteforce_widget = BruteForceWidget(self.working_directory)
 
-        self.exploiting_widget = QLabel("Exploitation Framework (Use C2 Tab for shells)")
-        self.exploiting_widget.setAlignment(Qt.AlignCenter)
+        self.exploiting_widget = ExploitFrameworkWidget()
 
         if self.engagement_type == "Pentest":
             self.setup_pentest_ui()

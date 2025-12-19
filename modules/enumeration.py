@@ -168,7 +168,7 @@ class EnumerationWidget(QWidget):
         lbl_conf = QLabel("2. CONFIGURE")
         lbl_conf.setFont(QFont("Arial", 12, QFont.Bold))
         lbl_conf.setStyleSheet("color: #00d2ff;")
-        self.btn_execute = QPushButton("EXECUTE COMMANDS")
+        self.btn_execute = QPushButton("START")
         self.btn_execute.setCursor(Qt.PointingHandCursor)
         self.btn_execute.setFixedSize(180, 40)
         self.btn_execute.setStyleSheet("""
