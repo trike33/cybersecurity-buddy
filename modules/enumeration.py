@@ -327,6 +327,7 @@ class EnumerationWidget(QWidget):
         self.generate_variable_inputs()
 
     def generate_variable_inputs(self):
+        # Reset UI
         while self.layout_vars.count():
             child = self.layout_vars.takeAt(0)
             if child.widget(): child.widget().deleteLater()
@@ -350,31 +351,51 @@ class EnumerationWidget(QWidget):
             matches = re.findall(r'\{([\w_-]+)\}', data['command'])
             for m in matches: needed_vars.add(m)
 
-        # 1. Targets
+        # 1. Targets (Smart Filtering)
         target_vars = {'IP', 'Target', 'Domain', 'Domain_Name'}
         needed_lower = {v.lower() for v in needed_vars}
         is_target_needed = any(t.lower() in needed_lower for t in target_vars)
         
         if is_target_needed:
-            lbl = QLabel("Select Targets (Scope):")
-            lbl.setStyleSheet("font-weight: bold; color: #00d2ff;")
-            self.layout_vars.addRow(lbl)
-            
             self.list_targets = QListWidget()
             self.list_targets.setSelectionMode(QAbstractItemView.ExtendedSelection)
             self.list_targets.setFixedHeight(120)
             self.list_targets.setStyleSheet("background-color: #222; color: white;")
-            
-            scope_path = os.path.join(self.working_directory, "scope.txt")
-            if os.path.exists(scope_path):
-                with open(scope_path, 'r') as f:
-                    for line in f:
-                        if line.strip(): self.list_targets.addItem(line.strip())
-            
             self.list_targets.itemSelectionChanged.connect(self.on_targets_changed)
+
+            # --- FILTERING LOGIC ---
+            filtered_hosts = []
+            service_name = ""
+            
+            # Try to get service name from UI selection
+            if self.list_services.currentItem():
+                service_name = self.list_services.currentItem().text().replace("★ ", "")
+            
+            # Query DB
+            if self.project_db_path and service_name:
+                filtered_hosts = project_db.get_hosts_for_service(self.project_db_path, service_name)
+
+            # Decide source
+            if filtered_hosts:
+                # Case A: Service found in DB -> Show Filtered Scope
+                lbl_text = f"Select Targets ({len(filtered_hosts)} hosts with {service_name}):"
+                for host in filtered_hosts:
+                    self.list_targets.addItem(host)
+            else:
+                # Case B: Service not in DB -> Show Full Scope (Fallback)
+                lbl_text = "Select Targets (Full Scope - Service not mapped):"
+                scope_path = os.path.join(self.working_directory, "scope.txt")
+                if os.path.exists(scope_path):
+                    with open(scope_path, 'r') as f:
+                        for line in f:
+                            if line.strip(): self.list_targets.addItem(line.strip())
+
+            lbl = QLabel(lbl_text)
+            lbl.setStyleSheet("font-weight: bold; color: #00d2ff;")
+            self.layout_vars.addRow(lbl)
             self.layout_vars.addRow(self.list_targets)
 
-        # 2. Credentials
+        # 2. Credentials (Unchanged)
         cred_vars = {'Username', 'Password', 'User', 'Pass'}
         is_cred_needed = any(c.lower() in needed_lower for c in cred_vars)
         
@@ -392,7 +413,7 @@ class EnumerationWidget(QWidget):
             
             self.filter_credentials_by_target([])
 
-        # 3. Generic
+        # 3. Generic (Unchanged)
         handled = {'ip', 'target', 'domain', 'domain_name', 'username', 'password', 'user', 'pass'}
         for var in sorted(list(needed_vars)):
             if var.lower() in handled: continue
@@ -403,7 +424,6 @@ class EnumerationWidget(QWidget):
             self.input_fields[var] = le
         
         self.update_preview_text()
-
     def on_targets_changed(self):
         selected_ips = []
         if self.list_targets:
