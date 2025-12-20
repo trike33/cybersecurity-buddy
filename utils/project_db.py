@@ -193,6 +193,17 @@ def is_valid_project_db(db_path):
     except:
         return False
 
+def get_hosts_for_service(db_path, service):
+    """Returns a list of hosts that have the specific service open."""
+    if not os.path.exists(db_path): return []
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    # Case-insensitive matching might be safer depending on how data was entered
+    c.execute("SELECT host FROM enum WHERE service=? COLLATE NOCASE", (service,))
+    rows = [r[0] for r in c.fetchall()]
+    conn.close()
+    return list(set(rows)) # Return unique hosts
+
 # --- ENUMERATION TRACKING ---
 
 def sync_enum_data(db_path, data_list):
