@@ -6,10 +6,11 @@ import webbrowser
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QDialog,
     QTableView, QHeaderView, QMessageBox, QPushButton, QHBoxLayout,
-    QTextEdit, QDialogButtonBox, QTabWidget, QListWidget, QLabel, QMenu
+    QTextEdit, QDialogButtonBox, QTabWidget, QListWidget, QLabel, QMenu,
+    QStyleOption, QStyle
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor, QBrush
+from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor, QBrush, QPainter, QPixmap
 from utils import db as command_db
 from .dialogs import FuzzerDialog
 import subprocess
@@ -608,17 +609,37 @@ class PlaygroundWindow(QDialog):
 
 class PlaygroundTabWidget(QWidget):
     """The main widget for the 'Playground' tab, using a grouped tree view."""
-    def __init__(self, working_directory, icon_path, terminal_widget, parent=None):
+    def __init__(self, working_directory, icon_path, terminal_widget, hostname_test=False, parent=None):
         super().__init__(parent)
         self.working_directory = working_directory
         self.icon_path = icon_path
         self.terminal_widget = terminal_widget
         
+        # --- Background Image Setup ---
+        self.bg_pixmap = None
+        if hostname_test:
+            # Assumes file structure: root/themes/img/pokemon/playground_bg.png
+            # and this file is in root/modules/playground.py
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            bg_path = os.path.join(base_path, "themes", "img", "pokemon", "playground_bg.png")
+            if os.path.exists(bg_path):
+                self.bg_pixmap = QPixmap(bg_path)
+                
+
         layout = QVBoxLayout(self)
         self.tree_widget = QTreeWidget()
         self.tree_widget.setHeaderHidden(True)
         self.tree_widget.setSelectionMode(QTreeWidget.ExtendedSelection)
         self.tree_widget.itemDoubleClicked.connect(self.open_selected_items)
+        
+        # If we have a background, make the tree transparent so we can see it
+        if self.bg_pixmap:
+            self.tree_widget.setStyleSheet("""
+                QTreeWidget { background-color: transparent; }
+                QTreeWidget::item { color: #ffffff; } 
+                QHeaderView::section { background-color: transparent; }
+            """)
+            
         layout.addWidget(self.tree_widget)
         
         open_button_layout = QHBoxLayout()
@@ -629,6 +650,19 @@ class PlaygroundTabWidget(QWidget):
         layout.addLayout(open_button_layout)
         
         self.refresh_playground()
+
+    def paintEvent(self, event):
+        """Override paintEvent to draw the background image."""
+        opt = QStyleOption()
+        opt.initFrom(self)
+        p = QPainter(self)
+        
+        if self.bg_pixmap and not self.bg_pixmap.isNull():
+            # Draw the background image scaled to fill the widget
+            p.drawPixmap(self.rect(), self.bg_pixmap)
+        else:
+            # Fallback to standard widget styling
+            self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
 
     def open_selected_items(self):
         selected_items = self.tree_widget.selectedItems()
@@ -684,6 +718,10 @@ class PlaygroundTabWidget(QWidget):
                     file_item = QTreeWidgetItem(self.tree_widget, [item_name])
                     file_item.setIcon(0, file_icon)
                     file_item.setData(0, Qt.UserRole, full_path)
+            
+            # Expand all bags by default for better visibility
+            self.tree_widget.expandAll()
+            
         except Exception as e:
             QTreeWidgetItem(self.tree_widget, [f"Error reading directory: {e}"])
 

@@ -2,10 +2,10 @@ import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, 
     QGridLayout, QProgressBar, QScrollArea, QPushButton,
-    QSizePolicy
+    QSizePolicy, QStyle, QStyleOption
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QColor, QPalette
+from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPixmap
 
 from utils import project_db
 
@@ -136,9 +136,20 @@ class ServiceEnumItem(QFrame):
 # ---------------------------------------------------------
 
 class DashboardWidget(QWidget):
-    def __init__(self, project_db_path=None, parent=None):
+    def __init__(self, project_db_path=None, hostname_test=False, parent=None):
         super().__init__(parent)
         self.project_db_path = project_db_path
+
+        # --- Background Image Logic ---
+        self.bg_pixmap = None
+        if hostname_test:
+            # Navigate to themes/img/pokemon/dashboard_bg.png (or use the playground one)
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            bg_path = os.path.join(base_path, "themes", "img", "pokemon", "dashboard_bg.png")
+            
+            if os.path.exists(bg_path):
+                self.bg_pixmap = QPixmap(bg_path)
+
         self.init_ui()
         self.load_data()
 
@@ -152,12 +163,14 @@ class DashboardWidget(QWidget):
         # =========================================================
         self.hero_frame = QFrame()
         self.hero_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.hero_frame.setStyleSheet("""
-            QFrame#Hero {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e1e2f, stop:1 #252535);
+
+        hero_bg = "rgba(30, 30, 47, 180)" if self.bg_pixmap else "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e1e2f, stop:1 #252535)"
+        self.hero_frame.setStyleSheet(f"""
+            QFrame#Hero {{
+                background-color: {hero_bg};
                 border: 2px solid #4a4a5e;
                 border-radius: 20px;
-            }
+            }}
         """)
         self.hero_frame.setObjectName("Hero")
         
@@ -221,6 +234,7 @@ class DashboardWidget(QWidget):
         
         # Container for lower part
         lower_container = QWidget()
+        lower_container.setAttribute(Qt.WA_TranslucentBackground)
         lower_layout = QHBoxLayout(lower_container)
         lower_layout.setContentsMargins(0, 0, 0, 0)
         lower_layout.setSpacing(30)
@@ -283,6 +297,19 @@ class DashboardWidget(QWidget):
             }
         """)
         self.main_layout.addWidget(btn_refresh, alignment=Qt.AlignRight)
+
+    def paintEvent(self, event):
+        """Override paintEvent to draw the background image."""
+        opt = QStyleOption()
+        opt.initFrom(self)
+        p = QPainter(self)
+        
+        if self.bg_pixmap and not self.bg_pixmap.isNull():
+            # Draw the background image scaled to the current widget size
+            p.drawPixmap(self.rect(), self.bg_pixmap)
+        else:
+            # Default behavior if no image is present
+            self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
 
     def load_data(self):
         if not self.project_db_path: return

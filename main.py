@@ -88,10 +88,12 @@ class StartupWizard(QDialog):
         # Determine the wallpaper directory based on the hostname
         base_path = os.path.dirname(os.path.abspath(__file__))
         current_hostname = get_current_hostname()
+        hostname_test = False
 
         # Determine which directory to use
         if current_hostname in whitelisted_hostnames:
             wallpaper_dir = os.path.join(base_path, "themes", "img", "pokemon")
+            hostname_test = True
         else:
             wallpaper_dir = os.path.join(base_path, "themes", "img")
 
@@ -780,6 +782,9 @@ class CyberSecBuddyApp(QMainWindow):
         # Guard clause for new projects to ensure path handling
         attack_db_path = None
         client_name = "Target"
+
+        whitelisted_hostnames = ["stegosaurus", "ankylo", "kali"]
+        self.hostname_test = socket.gethostname() in whitelisted_hostnames
         
         if self.project_db_path:
             self.project_data = project_db.load_project_data(self.project_db_path)
@@ -802,14 +807,14 @@ class CyberSecBuddyApp(QMainWindow):
         self.terminal_tab = CustomCommandsWidget(self.working_directory, self.icon_path)
         self.sudo_terminal_tab = SudoTerminalWidget(self.icon_path)
         self.report_tab = ReportTabWidget(db_path=self.project_db_path, project_name=client_name)
-        self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path, self.terminal_tab)
+        self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path, self.terminal_tab, hostname_test=self.hostname_test)
         
         project_folder = os.path.dirname(self.project_db_path) if self.project_db_path else self.working_directory
         self.attack_vectors_widget = AttackVectorsWidget(project_folder=project_folder, attack_db_path=attack_db_path)
         # UPDATED: Pass project_db_path to EnumerationWidget
         self.enumeration_tab = EnumerationWidget(self.working_directory, project_db_path=self.project_db_path)
         self.c2_tab = C2Widget(self.working_directory)
-        self.dashboard_tab = DashboardWidget(self.project_db_path)
+        self.dashboard_tab = DashboardWidget(self.project_db_path, hostname_test=self.hostname_test)
         self.cve_tab = CVESearchWidget()
         self.bruteforce_widget = BruteForceWidget(self.working_directory)
         self.payload_tab = PayloadGenWidget(project_folder=project_folder)
