@@ -527,7 +527,7 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.c2 import C2Widget
         from modules.dashboard import DashboardWidget
         from modules.bruteforce import BruteForceWidget
-        from modules.exploiting import ExploitFrameworkWidget
+        from modules.exploiting import ExploitingWidget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
@@ -568,7 +568,7 @@ class CyberSecBuddyApp(QMainWindow):
        
         self.bruteforce_widget = BruteForceWidget(self.working_directory)
 
-        self.exploiting_widget = ExploitFrameworkWidget()
+        self.exploiting_widget = ExploitingWidget(project_path=project_folder)
 
         if self.engagement_type == "Pentest":
             self.setup_pentest_ui()
