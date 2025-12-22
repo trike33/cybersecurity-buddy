@@ -1,0 +1,12 @@
+out
+dist
+node_modules
+.vscode-test/
+*.vsix
+.build-out/
+coverage/
+.nyc_output/
+.idea/
+media/main-bundle.js
+.DS_Store
+

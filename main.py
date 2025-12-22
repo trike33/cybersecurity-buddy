@@ -8,14 +8,13 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QDialog,
                              QFileDialog, QMessageBox, QListWidget, QLineEdit,
                              QComboBox, QDateEdit, QTextEdit, QDialogButtonBox)
 from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate
-from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap
+from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QMovie
 import shutil
 
 # Import utilities
 from utils import db as command_db
 from utils import project_db
 
-# ... (SimpleTextEditorDialog & StartupWizard classes remain unchanged) ...
 class SimpleTextEditorDialog(QDialog):
     """A simple popup to let the user type in domains or scope IPs manually."""
     def __init__(self, title, current_text="", parent=None):
@@ -509,6 +508,140 @@ class StartupWizard(QDialog):
         self.engagement_type = eng_type
         self.accept()
 
+class InteractivePokemonLabel(QLabel):
+    """
+    A clickable label that displays a random Pokemon GIF.
+    """
+    def __init__(self, asset_base_path, parent=None):
+        super().__init__(parent)
+        self.asset_base_path = asset_base_path
+        self.current_movie = None
+        
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedSize(80, 80) # Size for the sprite area
+        self.setStyleSheet("background: transparent;")
+        
+        # Initial load
+        self.load_random_pokemon()
+
+    def mousePressEvent(self, event):
+        """Click interaction: Change this specific Pokemon."""
+        self.load_random_pokemon()
+        # Call parent event to ensure standard processing if needed
+        super().mousePressEvent(event)
+
+    def load_random_pokemon(self):
+        """Logic to pick a random GIF from the asset structure."""
+        if not os.path.exists(self.asset_base_path):
+            self.setText("?")
+            return
+
+        try:
+            # 1. Find Generation folders
+            gens = [d for d in os.listdir(self.asset_base_path) if d.startswith('gen') and os.path.isdir(os.path.join(self.asset_base_path, d))]
+            if not gens: 
+                self.setText("No Gens")
+                return
+            
+            # 2. Random Gen -> Random Mon -> Random GIF
+            selected_gen = random.choice(gens)
+            gen_path = os.path.join(self.asset_base_path, selected_gen)
+            
+            pokemons = [d for d in os.listdir(gen_path) if os.path.isdir(os.path.join(gen_path, d))]
+            if not pokemons: return
+            
+            selected_mon = random.choice(pokemons)
+            mon_path = os.path.join(gen_path, selected_mon)
+            
+            gifs = [f for f in os.listdir(mon_path) if f.endswith('.gif')]
+            if not gifs: return
+            
+            # Prefer walking animations
+            walk_gifs = [g for g in gifs if 'walk' in g]
+            final_gif = random.choice(walk_gifs) if walk_gifs else random.choice(gifs)
+            
+            full_path = os.path.join(mon_path, final_gif)
+            
+            # 3. Setup Movie
+            if self.current_movie:
+                self.current_movie.stop()
+                self.current_movie.deleteLater()
+                self.current_movie = None
+                
+            self.current_movie = QMovie(full_path)
+            self.current_movie.setScaledSize(QSize(64, 64)) # The "Zoomed out" sprite size
+            self.setMovie(self.current_movie)
+            self.current_movie.start()
+            
+            self.setToolTip(f"{selected_mon.title()} ({selected_gen})")
+            
+        except Exception as e:
+            print(f"Error loading Pokemon sprite: {e}")
+            self.setText("Error")
+
+class PokemonCompanionWidget(QWidget):
+    """
+    Manages a team of InteractivePokemonLabels.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(140) # Compact height
+        
+        self.asset_base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "themes", "pokemon_assets")
+        
+        # Main Layout
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 5, 0, 5)
+        self.layout.setSpacing(2)
+        
+        # 1. Container for the Sprites (Row of 2)
+        self.sprites_container = QWidget()
+        self.sprites_layout = QHBoxLayout(self.sprites_container)
+        self.sprites_layout.setContentsMargins(0,0,0,0)
+        self.sprites_layout.setSpacing(0)
+        self.sprites_layout.setAlignment(Qt.AlignCenter)
+        
+        self.labels = []
+        # Create 2 companions
+        for _ in range(2):
+            lbl = InteractivePokemonLabel(self.asset_base_path)
+            self.labels.append(lbl)
+            self.sprites_layout.addWidget(lbl)
+            
+        self.layout.addWidget(self.sprites_container)
+        
+        # 2. Reload Button (Thin, unobtrusive)
+        self.btn_reload = QPushButton("↻ Reload Team")
+        self.btn_reload.setCursor(Qt.PointingHandCursor)
+        self.btn_reload.setFixedHeight(20)
+        self.btn_reload.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #444;
+                border-radius: 10px;
+                color: #666;
+                font-size: 10px;
+                margin: 0 40px; 
+            }
+            QPushButton:hover {
+                border-color: #666;
+                color: #888;
+                background-color: rgba(255,255,255,0.05);
+            }
+        """)
+        self.btn_reload.clicked.connect(self.reload_all)
+        self.layout.addWidget(self.btn_reload)
+        
+        # Check assets once
+        if not os.path.exists(self.asset_base_path):
+            self.btn_reload.setText("Assets Missing")
+            self.btn_reload.setEnabled(False)
+
+    def reload_all(self):
+        for lbl in self.labels:
+            lbl.load_random_pokemon()
+
 # ---------------------------------------------------------
 # 2. MAIN APPLICATION 
 # ---------------------------------------------------------
@@ -585,7 +718,6 @@ class CyberSecBuddyApp(QMainWindow):
         
         self.apply_theme()
 
-    # ... rest of the class is unchanged ...
     def setup_global_menus(self):
         menubar = self.menuBar()
         
@@ -703,6 +835,21 @@ class CyberSecBuddyApp(QMainWindow):
         main_layout.addWidget(self.sidebar)
         main_layout.addWidget(self.content_stack)
         self.sidebar_btns[0].click()
+
+        # --- POKEMON COMPANION (VSCODE PORT) ---
+        # "Universability": Uses standard Qt Widgets
+        # "Stability": No webviews or external node processes
+        
+        sidebar_layout.addStretch() # Ensure it's at the bottom
+        
+        self.pokemon_companion = PokemonCompanionWidget()
+        sidebar_layout.addWidget(self.pokemon_companion)
+        
+        # Optional: Add a label below it
+        lbl_hint = QLabel("Click for new companion")
+        lbl_hint.setAlignment(Qt.AlignCenter)
+        lbl_hint.setStyleSheet("color: #555; font-size: 9px; margin-bottom: 10px;")
+        sidebar_layout.addWidget(lbl_hint)
 
     def switch_pentest_tab(self, index):
         self.content_stack.setCurrentIndex(index)
