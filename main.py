@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QDialog,
 from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate, QTimer
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QMovie, QCursor
 import shutil
+import socket
 
 # Import utilities
 from utils import db as command_db
@@ -76,15 +77,33 @@ class StartupWizard(QDialog):
         self.setFixedSize(1200, 900)
 
         # --- RANDOM WALLPAPER LOGIC ---
+
+        # Define a list of whitelisted hostnames
+        whitelisted_hostnames = ['kali', 'stegosaurus', 'ankylo']
+
+        # Function to get the current hostname
+        def get_current_hostname():
+            return socket.gethostname()
+
+        # Determine the wallpaper directory based on the hostname
         base_path = os.path.dirname(os.path.abspath(__file__))
-        wallpaper_dir = os.path.join(base_path, "themes", "img")
+        current_hostname = get_current_hostname()
+
+        # Determine which directory to use
+        if current_hostname in whitelisted_hostnames:
+            wallpaper_dir = os.path.join(base_path, "themes", "img", "pokemon")
+        else:
+            wallpaper_dir = os.path.join(base_path, "themes", "img")
+
         selected_wallpaper = None
-        
+
+        # Check if the wallpaper directory exists and contains images
         if os.path.exists(wallpaper_dir):
             images = [f for f in os.listdir(wallpaper_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             if images:
                 selected_wallpaper = os.path.join(wallpaper_dir, random.choice(images))
-        
+
+        # If no wallpaper is selected, use the default background
         if not selected_wallpaper:
             default_bg = os.path.join(base_path, "themes", "img", "wizard_bg.jpeg")
             if os.path.exists(default_bg):
@@ -752,6 +771,8 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.dashboard import DashboardWidget
         from modules.bruteforce import BruteForceWidget
         from modules.exploiting import ExploitingWidget
+        from modules.cve_search import CVESearchWidget
+        from modules.payload_gen import PayloadGenWidget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
@@ -789,8 +810,9 @@ class CyberSecBuddyApp(QMainWindow):
         self.enumeration_tab = EnumerationWidget(self.working_directory, project_db_path=self.project_db_path)
         self.c2_tab = C2Widget(self.working_directory)
         self.dashboard_tab = DashboardWidget(self.project_db_path)
-       
+        self.cve_tab = CVESearchWidget()
         self.bruteforce_widget = BruteForceWidget(self.working_directory)
+        self.payload_tab = PayloadGenWidget(project_folder=project_folder)
 
         self.exploiting_widget = ExploitingWidget(project_path=project_folder)
 
@@ -905,8 +927,6 @@ class CyberSecBuddyApp(QMainWindow):
         # Initialize Placeholders for Coming Soon Features
         self.mitm_tab = ComingSoonWidget("Relaying & MITM", "Tools for ARP spoofing, SMB relaying, and traffic interception.")
         self.phishing_tab = ComingSoonWidget("Phishing Campaigns", "Manage templates and track credentials.")
-        self.cve_tab = ComingSoonWidget("CVE Search", "Integration with Snyk and CVEmap.")
-        self.payload_tab = ComingSoonWidget("Payload Generation", "Wrappers for msfvenom and OpenSSL.")
 
         self.content_stack = QStackedWidget()
         self.content_stack.addWidget(self.scan_control_tab)

@@ -2,3 +2,5 @@ PyQt5
 markdown
 matplotlib
 psutil
+requests
+beautifulsoup4
