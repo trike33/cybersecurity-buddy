@@ -291,6 +291,12 @@ class EnumerationWidget(QWidget):
             self.list_services.addItem(display)
 
     def on_service_selected(self, item):
+        # 1. Update filename based on service
+        service = item.text().replace("★ ", "")
+        safe_name = re.sub(r'[^\w\-]', '_', service).lower()
+        self.inp_save_filename.setText(f"{safe_name}_enum.txt")
+
+        # 2. Existing logic
         self.update_command_list_view()
         self.chk_completed.blockSignals(True)
         self.chk_completed.setChecked(False)

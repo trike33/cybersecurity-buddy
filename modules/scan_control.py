@@ -50,11 +50,17 @@ class ScanControlWidget(QWidget):
         self.naabu_process.readyReadStandardError.connect(self.handle_naabu_stderr)
         self.naabu_process.finished.connect(self.handle_naabu_finished)
 
-        # 2. Nmap
+        # 2. Nmap (TCP)
         self.nmap_process = QProcess(self)
         self.nmap_process.readyReadStandardOutput.connect(self.handle_nmap_stdout)
         self.nmap_process.readyReadStandardError.connect(self.handle_nmap_stderr)
         self.nmap_process.finished.connect(self.handle_nmap_finished)
+
+        # 3. Nmap (UDP)
+        self.udp_process = QProcess(self)
+        self.udp_process.readyReadStandardOutput.connect(self.handle_udp_stdout)
+        self.udp_process.readyReadStandardError.connect(self.handle_udp_stderr)
+        self.udp_process.finished.connect(self.handle_udp_finished)
 
         # --- Main Layout ---
         main_layout = QVBoxLayout(self)
@@ -80,43 +86,61 @@ class ScanControlWidget(QWidget):
         # ---------------------------------------------------------
         toolbar_layout = QHBoxLayout(); toolbar_layout.setSpacing(10)
 
-        self.start_button = QPushButton("▶ START SCAN"); self.start_button.setFixedSize(150, 50)
+        self.start_button = QPushButton("▶ START SCAN"); self.start_button.setFixedSize(140, 50)
         self.start_button.setStyleSheet("QPushButton { background-color: #28a745; color: white; font-weight: bold; border-radius: 6px; } QPushButton:hover { background-color: #218838; }")
         self.start_button.clicked.connect(self.start_scan)
         
-        self.stop_button = QPushButton("■ STOP SCAN"); self.stop_button.setEnabled(False); self.stop_button.setFixedSize(150, 50)
+        self.stop_button = QPushButton("■ STOP SCAN"); self.stop_button.setEnabled(False); self.stop_button.setFixedSize(140, 50)
         self.stop_button.setStyleSheet("QPushButton { background-color: #dc3545; color: white; font-weight: bold; border-radius: 6px; } QPushButton:disabled { background-color: #5a3a3a; color: #888; }")
         self.stop_button.clicked.connect(self.stop_scan)
 
-        self.naabu_button = QPushButton("⚡ NAABU (SUDO)"); self.naabu_button.setFixedSize(160, 50)
+        self.naabu_button = QPushButton("⚡ NAABU (SUDO)"); self.naabu_button.setFixedSize(150, 50)
         self.naabu_button.setStyleSheet("QPushButton { background-color: #6f42c1; color: white; font-weight: bold; border-radius: 6px; } QPushButton:hover { background-color: #5a32a3; }")
         self.naabu_button.clicked.connect(self.run_naabu_scan)
 
-        # NMAP BUTTON (Initially Disabled)
-        self.nmap_button = QPushButton("🔍 NMAP (SUDO)"); self.nmap_button.setFixedSize(160, 50); self.nmap_button.setEnabled(False)
+        # NMAP TCP BUTTON (Initially Disabled)
+        self.nmap_button = QPushButton("🔍 TCP SCAN"); self.nmap_button.setFixedSize(150, 50); self.nmap_button.setEnabled(False)
         self.nmap_button.setStyleSheet("QPushButton { background-color: #007bff; color: white; font-weight: bold; border-radius: 6px; } QPushButton:hover { background-color: #0056b3; } QPushButton:disabled { background-color: #2f3b4c; color: #666; border: 1px solid #444; }")
         self.nmap_button.clicked.connect(self.run_nmap_scan)
+
+        # NMAP UDP BUTTON (Initially Disabled)
+        self.udp_button = QPushButton("🎯 UDP SCAN"); self.udp_button.setFixedSize(150, 50); self.udp_button.setEnabled(False)
+        self.udp_button.setStyleSheet("QPushButton { background-color: #fd7e14; color: white; font-weight: bold; border-radius: 6px; } QPushButton:hover { background-color: #e36a0d; } QPushButton:disabled { background-color: #2f3b4c; color: #666; border: 1px solid #444; }")
+        self.udp_button.clicked.connect(self.run_udp_scan)
 
         zoom_style = "QPushButton { background-color: #4a4a5e; color: white; font-size: 18px; font-weight: bold; border-radius: 6px; }"
         btn_zoom_out = QPushButton("-"); btn_zoom_out.setFixedSize(50, 50); btn_zoom_out.setStyleSheet(zoom_style); btn_zoom_out.clicked.connect(lambda: self.zoom_log(-1))
         btn_zoom_in = QPushButton("+"); btn_zoom_in.setFixedSize(50, 50); btn_zoom_in.setStyleSheet(zoom_style); btn_zoom_in.clicked.connect(lambda: self.zoom_log(1))
 
-        toolbar_layout.addWidget(self.start_button); toolbar_layout.addWidget(self.stop_button); toolbar_layout.addWidget(self.naabu_button); toolbar_layout.addWidget(self.nmap_button)
+        toolbar_layout.addWidget(self.start_button); toolbar_layout.addWidget(self.stop_button)
+        toolbar_layout.addWidget(self.naabu_button); toolbar_layout.addWidget(self.nmap_button); toolbar_layout.addWidget(self.udp_button)
         toolbar_layout.addStretch(); toolbar_layout.addWidget(btn_zoom_out); toolbar_layout.addWidget(btn_zoom_in)
         main_layout.addLayout(toolbar_layout)
 
         # ---------------------------------------------------------
         # 2.5 COMMAND PREVIEWS
         # ---------------------------------------------------------
+        # Helper for input styling
+        input_style = "QLineEdit { background-color: #222; font-family: Consolas; border: 1px solid #444; padding: 4px; }"
+        label_cmd_style = "color: #ccc; font-weight: bold;"
+
+        # Naabu
         naabu_layout = QHBoxLayout()
-        self.inp_naabu_cmd = QLineEdit(); self.inp_naabu_cmd.setStyleSheet("QLineEdit { background-color: #222; color: #00ff00; font-family: Consolas; border: 1px solid #444; padding: 4px; }")
-        naabu_layout.addWidget(QLabel("Naabu Command:", styleSheet="color: #ccc; font-weight: bold;")); naabu_layout.addWidget(self.inp_naabu_cmd)
+        self.inp_naabu_cmd = QLineEdit(); self.inp_naabu_cmd.setStyleSheet(input_style + " color: #00ff00;")
+        naabu_layout.addWidget(QLabel("Naabu Command:", styleSheet=label_cmd_style)); naabu_layout.addWidget(self.inp_naabu_cmd)
         main_layout.addLayout(naabu_layout)
 
+        # Nmap TCP
         nmap_layout = QHBoxLayout()
-        self.inp_nmap_cmd = QLineEdit(); self.inp_nmap_cmd.setStyleSheet("QLineEdit { background-color: #222; color: #00ccff; font-family: Consolas; border: 1px solid #444; padding: 4px; }")
-        nmap_layout.addWidget(QLabel("Nmap Command: ", styleSheet="color: #ccc; font-weight: bold;")); nmap_layout.addWidget(self.inp_nmap_cmd)
+        self.inp_nmap_cmd = QLineEdit(); self.inp_nmap_cmd.setStyleSheet(input_style + " color: #00ccff;")
+        nmap_layout.addWidget(QLabel("TCP Command:  ", styleSheet=label_cmd_style)); nmap_layout.addWidget(self.inp_nmap_cmd)
         main_layout.addLayout(nmap_layout)
+
+        # Nmap UDP
+        udp_layout = QHBoxLayout()
+        self.inp_udp_cmd = QLineEdit(); self.inp_udp_cmd.setStyleSheet(input_style + " color: #ffab40;")
+        udp_layout.addWidget(QLabel("UDP Command:  ", styleSheet=label_cmd_style)); udp_layout.addWidget(self.inp_udp_cmd)
+        main_layout.addLayout(udp_layout)
 
         # ---------------------------------------------------------
         # 3. LOGGING AREA
@@ -147,19 +171,22 @@ class ScanControlWidget(QWidget):
                 self.lbl_scope.setText(f"SCOPE: {os.path.basename(possible_scope)}")
                 self.update_command_previews()
             self.update_log("[*] Manual Mode (No DB).")
-            self.check_nmap_availability() # Initial Check
+            self.check_scan_availability() # Initial Check
 
     # --- Methods ---
     
-    def check_nmap_availability(self):
-        """Checks if naabu_out exists. Enables/Disables Nmap button."""
+    def check_scan_availability(self):
+        """Checks if naabu_out exists. Enables/Disables Nmap TCP/UDP buttons."""
         naabu_out = os.path.join(self.working_directory, "naabu_out")
-        if os.path.exists(naabu_out) and os.path.getsize(naabu_out) > 0:
-            self.nmap_button.setEnabled(True)
-            self.nmap_button.setToolTip("Ready to scan found targets")
-        else:
-            self.nmap_button.setEnabled(False)
-            self.nmap_button.setToolTip("Run Naabu first to generate targets")
+        ready = os.path.exists(naabu_out) and os.path.getsize(naabu_out) > 0
+        
+        # Enable TCP
+        self.nmap_button.setEnabled(ready)
+        self.nmap_button.setToolTip("Ready to scan found targets" if ready else "Run Naabu first to generate targets")
+        
+        # Enable UDP
+        self.udp_button.setEnabled(True)
+        self.udp_button.setToolTip("Ready to scan found targets" if ready else "Run Naabu first to generate targets")
 
     def update_command_previews(self):
         scope = self.scope_file_path if self.scope_file_path else "<SCOPE_FILE>"
@@ -168,10 +195,15 @@ class ScanControlWidget(QWidget):
         naabu_out = os.path.join(self.working_directory, "naabu_out")
         self.inp_naabu_cmd.setText(f"naabu -list {scope} -o {naabu_out}")
         
-        # Nmap - Note: We use a sanitized file, but for preview we show 'naabu_out' to indicate dependency
-        # The code will handle the sanitization internally.
+        # Nmap TCP
+        # Note: We use a sanitized file, but for preview we show 'naabu_out' to indicate dependency
         nmap_out = os.path.join(self.working_directory, "nmap_out")
         self.inp_nmap_cmd.setText(f"nmap -sC -sV -O -iL naabu_out -oN {nmap_out}")
+
+        # Nmap UDP
+        # Defaults to Top 100 ports for speed, using the same target list
+        udp_out = os.path.join(self.working_directory, "nmap_udp_out")
+        self.inp_udp_cmd.setText(f"nmap -sU --top-ports 100 -sV -iL {scope} naabu_out -oN {udp_out}")
 
     def load_project_info(self):
         data = project_db.load_project_data(self.project_db_path)
@@ -187,9 +219,9 @@ class ScanControlWidget(QWidget):
                 self.update_log("[!] scope.txt not found in project folder.")
             
             self.update_command_previews()
-            self.check_nmap_availability()
+            self.check_scan_availability()
 
-    # ... [Keep Helpers: open_command_editor, show_background_tasks, toggle_theme, zoom_log, etc.] ...
+    # ... [Helpers] ...
     def open_command_editor(self):
         if CommandEditorDialog: CommandEditorDialog(self).exec_()
     def show_background_tasks(self): self.bg_tasks_dialog.show()
@@ -216,6 +248,26 @@ class ScanControlWidget(QWidget):
             if ok and text: self.sudo_password = text; return True
             return False
         return True
+
+    def _prepare_nmap_targets(self, source_file):
+        """Helper to create a sanitized IP list from naabu output."""
+        targets_file = os.path.join(self.working_directory, "nmap_targets.txt")
+        try:
+            unique_ips = set()
+            with open(source_file, 'r') as f:
+                for line in f:
+                    if ":" in line:
+                        ip = line.strip().split(":")[0] # Extract IP
+                        unique_ips.add(ip)
+                    elif line.strip():
+                        unique_ips.add(line.strip())
+            
+            with open(targets_file, 'w') as f:
+                f.write("\n".join(unique_ips))
+            return targets_file
+        except Exception as e:
+            self.update_log(f"[!] Error preparing target list: {e}")
+            return None
 
     # --- EXECUTION: NAABU ---
     def run_naabu_scan(self):
@@ -253,10 +305,10 @@ class ScanControlWidget(QWidget):
         if self.project_db_path:
             project_db.mark_step_complete(self.project_db_path, "Naabu Scan", True)
             
-        self.check_nmap_availability() 
+        self.check_scan_availability() 
         self.scan_updated.emit()
 
-    # --- EXECUTION: NMAP ---
+    # --- EXECUTION: NMAP (TCP) ---
     def run_nmap_scan(self):
         cmd_str = self.inp_nmap_cmd.text().strip()
         if not cmd_str: QMessageBox.warning(self, "Empty Command", "Enter valid command."); return
@@ -268,29 +320,12 @@ class ScanControlWidget(QWidget):
         if not os.path.exists(naabu_out):
             QMessageBox.critical(self, "Missing Dependency", "naabu_out file not found. Run Naabu first."); return
 
-        # SANITIZATION: Create a temporary file with just IPs if command uses -iL naabu_out
-        # Nmap -iL fails if lines contain ports (IP:Port).
+        # SANITIZATION: Create a temporary file with just IPs
         if "naabu_out" in cmd_str:
-            targets_file = os.path.join(self.working_directory, "nmap_targets.txt")
-            try:
-                unique_ips = set()
-                with open(naabu_out, 'r') as f:
-                    for line in f:
-                        if ":" in line:
-                            ip = line.strip().split(":")[0] # Extract IP
-                            unique_ips.add(ip)
-                        elif line.strip():
-                            unique_ips.add(line.strip())
-                
-                with open(targets_file, 'w') as f:
-                    f.write("\n".join(unique_ips))
-                
-                # Replace filename in command string
+            targets_file = self._prepare_nmap_targets(naabu_out)
+            if targets_file:
                 cmd_str = cmd_str.replace("naabu_out", "nmap_targets.txt")
                 self.update_log("[i] Created sanitized target list: nmap_targets.txt")
-            except Exception as e:
-                self.update_log(f"[!] Error preparing target list: {e}")
-                return
 
         if cmd_str.startswith("sudo "): cmd_str = cmd_str[5:].strip()
         cmd_args = shlex.split(cmd_str)
@@ -300,7 +335,7 @@ class ScanControlWidget(QWidget):
             project_dir = os.path.dirname(self.project_db_path)
             if os.path.exists(project_dir): exec_dir = project_dir
         
-        self.update_log(f"<br><span style='color: #00ccff;'><b>[🔍] Starting Nmap Scan (Sudo)</b></span>")
+        self.update_log(f"<br><span style='color: #00ccff;'><b>[🔍] Starting Nmap TCP Scan (Sudo)</b></span>")
         self.update_log(f"Command: sudo {cmd_str}")
 
         self.nmap_process.setWorkingDirectory(exec_dir)
@@ -319,12 +354,55 @@ class ScanControlWidget(QWidget):
         if d and "[sudo]" not in d: self.update_log(f"<span style='color:orange;'>{d}</span>")
     def handle_nmap_finished(self):
         self.nmap_button.setEnabled(True); self.start_button.setEnabled(True); self.stop_button.setEnabled(False)
-        self.update_log(f"<br><span style='color: #28a745;'><b>[✔] Nmap scan finished.</b></span>")
+        self.update_log(f"<br><span style='color: #28a745;'><b>[✔] Nmap TCP scan finished.</b></span>")
         if self.project_db_path:
-            project_db.mark_step_complete(self.project_db_path, "Nmap Scan", True)
-            
+            project_db.mark_step_complete(self.project_db_path, "Nmap TCP Scan", True)
         self.scan_updated.emit()
-    # ... [Generic Execution Methods same as before] ...
+
+    def run_udp_scan(self):
+        cmd_str = self.inp_udp_cmd.text().strip()
+        if not cmd_str: QMessageBox.warning(self, "Empty Command", "Enter valid command."); return
+        if self.udp_process.state() == QProcess.Running: QMessageBox.warning(self, "Busy", "Scan running."); return
+        if not self.prompt_for_sudo_password(): return
+
+        # REMOVED: Pre-flight check for naabu_out
+        # REMOVED: Sanitization logic for naabu_out
+
+        if cmd_str.startswith("sudo "): cmd_str = cmd_str[5:].strip()
+        cmd_args = shlex.split(cmd_str)
+        
+        exec_dir = self.working_directory
+        if self.project_db_path:
+            project_dir = os.path.dirname(self.project_db_path)
+            if os.path.exists(project_dir): exec_dir = project_dir
+        
+        self.update_log(f"<br><span style='color: #fd7e14;'><b>[🎯] Starting UDP Scan (Sudo)</b></span>")
+        self.update_log(f"Command: sudo {cmd_str}")
+
+        self.udp_process.setWorkingDirectory(exec_dir)
+        self.udp_process.start("sudo", ["-S"] + cmd_args)
+        
+        if self.udp_process.waitForStarted():
+            self.udp_process.write((self.sudo_password + "\n").encode())
+            self.udp_button.setEnabled(False); self.start_button.setEnabled(False); self.stop_button.setEnabled(True)
+        else: self.update_log(f"[!] Failed to start UDP Scan: {self.udp_process.errorString()}")
+
+    def handle_udp_stdout(self):
+        data = self.udp_process.readAllStandardOutput().data().decode(errors='ignore').strip()
+        if data: self.update_log(f"<span style='color:#ffcc80;'>{data}</span>")
+    def handle_udp_stderr(self):
+        d = self.udp_process.readAllStandardError().data().decode(errors='ignore').strip()
+        if d and "[sudo]" not in d: self.update_log(f"<span style='color:orange;'>{d}</span>")
+    def handle_udp_finished(self):
+        self.udp_button.setEnabled(True); self.start_button.setEnabled(True); self.stop_button.setEnabled(False)
+        self.update_log(f"<br><span style='color: #28a745;'><b>[✔] UDP scan finished.</b></span>")
+        # Optional: Add project_db milestone for UDP if you wish
+        if self.project_db_path:
+            project_db.mark_step_complete(self.project_db_path, "Nmap UDP Scan", True)
+        self.scan_updated.emit()
+        self.scan_updated.emit()
+
+    # ... [Generic Execution Methods] ...
     def start_scan(self):
         if not self.target_name: QMessageBox.warning(self, "Input Error", "Target Name not set."); return
         if not self.scope_file_path: QMessageBox.warning(self, "Input Error", "Scope File not found."); return
@@ -343,7 +421,8 @@ class ScanControlWidget(QWidget):
     def stop_scan(self):
         if self.worker and self.worker.isRunning(): self.worker.stop()
         if self.naabu_process.state() == QProcess.Running: self.naabu_process.terminate(); self.update_log("[!] Terminating Naabu...")
-        if self.nmap_process.state() == QProcess.Running: self.nmap_process.terminate(); self.update_log("[!] Terminating Nmap...")
+        if self.nmap_process.state() == QProcess.Running: self.nmap_process.terminate(); self.update_log("[!] Terminating TCP Scan...")
+        if self.udp_process.state() == QProcess.Running: self.udp_process.terminate(); self.update_log("[!] Terminating UDP Scan...")
         self.scan_timer.stop()
 
     def update_log(self, message): self.output_log.append(self.ansi_to_html(message))

@@ -75,7 +75,8 @@ def initialize_project_db(folder_path, db_filename="project_data.db"):
         steps = [
             ("Basic HTTP Check", "recon", 0),
             ("Naabu Scan", "recon", 0),
-            ("Nmap Scan", "recon", 0)
+            ("Nmap TCP Scan", "recon", 0),
+            ("Nmap UDP Scan", "recon", 0)
         ]
         cursor.executemany("INSERT INTO progress (step, kind, completed) VALUES (?, ?, ?)", steps)
 
