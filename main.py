@@ -527,7 +527,7 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.c2 import C2Widget
         from modules.dashboard import DashboardWidget
         from modules.bruteforce import BruteForceWidget
-        from modules.msf_console import ExploitFrameworkWidget
+        from modules.exploiting import ExploitFrameworkWidget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path

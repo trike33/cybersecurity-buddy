@@ -2,11 +2,12 @@ import sys
 import os
 import signal
 import subprocess
+import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QLineEdit, QComboBox, QTextEdit, QGroupBox, QSplitter, 
     QTabWidget, QFormLayout, QMessageBox, QDialog, QTableWidget, 
-    QTableWidgetItem, QHeaderView, QFrame
+    QTableWidgetItem, QHeaderView, QFrame, QFileDialog
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtNetwork import QNetworkInterface, QAbstractSocket
@@ -69,7 +70,7 @@ class ProcessWorker(QThread):
                 pass 
 
 # ---------------------------------------------------------
-# 2. REUSABLE LISTENER WIDGET
+# 2. REUSABLE LISTENER WIDGET (NETCAT)
 # ---------------------------------------------------------
 class NetcatListenerWidget(QWidget):
     """A single instance of a Netcat listener terminal."""
@@ -87,7 +88,7 @@ class NetcatListenerWidget(QWidget):
         header = QHBoxLayout()
         self.inp_port = QLineEdit("4444")
         self.inp_port.setFixedWidth(80)
-        self.btn_toggle = QPushButton("Start Listener")
+        self.btn_toggle = QPushButton("Start NC Listener")
         self.btn_toggle.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
         self.btn_toggle.clicked.connect(self.toggle_listener)
         
@@ -114,7 +115,7 @@ class NetcatListenerWidget(QWidget):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker = None
-            self.btn_toggle.setText("Start Listener")
+            self.btn_toggle.setText("Start NC Listener")
             self.btn_toggle.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
             self.term_out.append("\n[!] Listener Stopped.")
         else:
@@ -128,7 +129,7 @@ class NetcatListenerWidget(QWidget):
             self.worker.error_received.connect(self.term_out.append)
             self.worker.start()
             
-            self.btn_toggle.setText("Stop Listener")
+            self.btn_toggle.setText("Stop NC Listener")
             self.btn_toggle.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold;")
 
     def send_command(self):
@@ -139,10 +140,137 @@ class NetcatListenerWidget(QWidget):
             self.term_in.clear()
 
 # ---------------------------------------------------------
-# 3. REUSABLE SERVER WIDGET
+# 3. NEW: MSFCONSOLE LISTENER WIDGET
+# ---------------------------------------------------------
+class MsfListenerWidget(QWidget):
+    """A widget to launch msfconsole listeners quickly."""
+    def __init__(self, working_directory, parent=None):
+        super().__init__(parent)
+        self.working_directory = working_directory
+        self.worker = None
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Configuration Group
+        config_group = QGroupBox("Metasploit Handler Options")
+        config_group.setStyleSheet("QGroupBox { font-weight: bold; color: #d63384; border: 1px solid #4a4a5e; margin-top: 5px; }")
+        config_layout = QHBoxLayout(config_group)
+
+        # Payload Selection
+        self.combo_payload = QComboBox()
+        self.combo_payload.setEditable(True)
+        common_payloads = [
+            "windows/x64/meterpreter/reverse_tcp",
+            "linux/x64/meterpreter/reverse_tcp",
+            "java/jsp_shell_reverse_tcp",
+            "php/meterpreter/reverse_tcp",
+            "python/meterpreter/reverse_tcp",
+            "cmd/unix/reverse_netcat"
+        ]
+        self.combo_payload.addItems(common_payloads)
+        self.combo_payload.setFixedWidth(250)
+
+        # LHOST
+        self.inp_lhost = QComboBox() 
+        self.inp_lhost.setEditable(True)
+        self.refresh_ips()
+        self.inp_lhost.setFixedWidth(150)
+
+        # LPORT
+        self.inp_lport = QLineEdit("4444")
+        self.inp_lport.setFixedWidth(60)
+
+        # Start Button
+        self.btn_start = QPushButton("Launch MSF")
+        self.btn_start.setStyleSheet("background-color: #6610f2; color: white; font-weight: bold;")
+        self.btn_start.clicked.connect(self.toggle_msf)
+
+        config_layout.addWidget(QLabel("Payload:"))
+        config_layout.addWidget(self.combo_payload)
+        config_layout.addWidget(QLabel("LHOST:"))
+        config_layout.addWidget(self.inp_lhost)
+        config_layout.addWidget(QLabel("LPORT:"))
+        config_layout.addWidget(self.inp_lport)
+        config_layout.addWidget(self.btn_start)
+        config_layout.addStretch()
+
+        layout.addWidget(config_group)
+
+        # Terminal Output
+        self.term_out = QTextEdit()
+        self.term_out.setReadOnly(True)
+        self.term_out.setStyleSheet("background-color: #1e1e1e; color: #d63384; font-family: Consolas; font-size: 13px; border: 1px solid #444;")
+        layout.addWidget(self.term_out)
+
+        # Input
+        self.term_in = QLineEdit()
+        self.term_in.setPlaceholderText("Type command into MSF session...")
+        self.term_in.setStyleSheet("background-color: #222; color: #d63384; font-family: Consolas; border: 1px solid #444;")
+        self.term_in.returnPressed.connect(self.send_command)
+        layout.addWidget(self.term_in)
+
+    def refresh_ips(self):
+        self.inp_lhost.clear()
+        interfaces = QNetworkInterface.allInterfaces()
+        for iface in interfaces:
+            if iface.flags() & QNetworkInterface.IsUp and not (iface.flags() & QNetworkInterface.IsLoopBack):
+                for entry in iface.addressEntries():
+                    if entry.ip().protocol() == QAbstractSocket.IPv4Protocol:
+                        ip = entry.ip().toString()
+                        self.inp_lhost.addItem(ip)
+        self.inp_lhost.addItem("0.0.0.0")
+
+    def toggle_msf(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.stop()
+            self.worker = None
+            self.btn_start.setText("Launch MSF")
+            self.btn_start.setStyleSheet("background-color: #6610f2; color: white; font-weight: bold;")
+            self.term_out.append("\n[!] MSF Stopped.")
+        else:
+            payload = self.combo_payload.currentText()
+            lhost = self.inp_lhost.currentText()
+            lport = self.inp_lport.text()
+
+            # Construct the one-liner
+            msf_cmd = (
+                f"use exploit/multi/handler; "
+                f"set PAYLOAD {payload}; "
+                f"set LHOST {lhost}; "
+                f"set LPORT {lport}; "
+                f"set ExitOnSession false; "
+                f"run"
+            )
+            
+            # -q for quiet, -x to execute command
+            full_cmd = f"msfconsole -q -x \"{msf_cmd}\""
+
+            self.term_out.clear()
+            self.term_out.append(f"[*] Starting: {full_cmd}\n")
+            
+            self.worker = ProcessWorker(full_cmd, self.working_directory)
+            self.worker.output_received.connect(self.term_out.append)
+            self.worker.error_received.connect(self.term_out.append)
+            self.worker.start()
+            
+            self.btn_start.setText("Kill MSF")
+            self.btn_start.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold;")
+
+    def send_command(self):
+        if self.worker and self.worker.isRunning():
+            cmd = self.term_in.text()
+            self.term_out.append(f"> {cmd}")
+            self.worker.write_input(cmd)
+            self.term_in.clear()
+
+# ---------------------------------------------------------
+# 4. UPDATED FILE SERVER WIDGET (WITH FILE LISTING)
 # ---------------------------------------------------------
 class FileServerWidget(QWidget):
-    """A single instance of a File Server (HTTP/SMB)."""
+    """A single instance of a File Server (HTTP/SMB) with CWD Listing."""
     def __init__(self, working_directory, db_path, parent=None):
         super().__init__(parent)
         self.working_directory = working_directory
@@ -150,43 +278,67 @@ class FileServerWidget(QWidget):
         self.worker = None
         self.init_ui()
         self.load_options()
+        self.refresh_file_list()
 
     def init_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         
-        # Left Config
+        # --- Left Panel: Config & Files ---
         left_panel = QFrame()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 10, 0)
         
+        # 1. Config Section
         left_layout.addWidget(QLabel("1. Server Type:", styleSheet="color:#00d2ff; font-weight:bold;"))
         self.combo_type = QComboBox()
         self.combo_type.currentIndexChanged.connect(self.update_preview)
         left_layout.addWidget(self.combo_type)
         
-        left_layout.addSpacing(10)
         left_layout.addWidget(QLabel("2. Config (Port/Share):", styleSheet="color:#00d2ff; font-weight:bold;"))
         self.inp_arg = QLineEdit()
         self.inp_arg.textChanged.connect(self.update_preview)
         left_layout.addWidget(self.inp_arg)
         
-        left_layout.addSpacing(10)
         left_layout.addWidget(QLabel("3. Preview:", styleSheet="color:#00d2ff; font-weight:bold;"))
         self.txt_preview = QTextEdit()
-        self.txt_preview.setFixedHeight(60)
+        self.txt_preview.setFixedHeight(50)
         self.txt_preview.setStyleSheet("background-color: #222; color: #00ff00; font-family: Consolas;")
         left_layout.addWidget(self.txt_preview)
         
-        left_layout.addSpacing(15)
         self.btn_toggle = QPushButton("START SERVER")
         self.btn_toggle.setFixedHeight(40)
         self.btn_toggle.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
         self.btn_toggle.clicked.connect(self.toggle_server)
         left_layout.addWidget(self.btn_toggle)
-        left_layout.addStretch()
+
+        # 2. File Listing Section (New)
+        left_layout.addSpacing(15)
+        file_header_layout = QHBoxLayout()
+        file_header_layout.addWidget(QLabel("Local Files (CWD):", styleSheet="color:#ffc107; font-weight:bold;"))
+        btn_refresh = QPushButton("↻")
+        btn_refresh.setFixedWidth(30)
+        btn_refresh.clicked.connect(self.refresh_file_list)
+        file_header_layout.addWidget(btn_refresh)
+        left_layout.addLayout(file_header_layout)
+
+        # CWD Display
+        self.lbl_cwd = QLineEdit(self.working_directory)
+        self.lbl_cwd.setReadOnly(True)
+        self.lbl_cwd.setStyleSheet("background-color: #333; color: #aaa; border: none; font-size: 10px;")
+        left_layout.addWidget(self.lbl_cwd)
+
+        # File Table
+        self.table_files = QTableWidget()
+        self.table_files.setColumnCount(2)
+        self.table_files.setHorizontalHeaderLabels(["Name", "Size"])
+        self.table_files.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table_files.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table_files.verticalHeader().setVisible(False)
+        self.table_files.setStyleSheet("QTableWidget { background-color: #222; color: #eee; font-size: 11px; }")
+        left_layout.addWidget(self.table_files)
         
-        # Right Log
+        # --- Right Panel: Logs ---
         right_panel = QGroupBox("Server Log")
         right_panel.setStyleSheet("color: #ccc;")
         right_layout = QVBoxLayout(right_panel)
@@ -238,8 +390,39 @@ class FileServerWidget(QWidget):
             self.btn_toggle.setText("STOP SERVER")
             self.btn_toggle.setStyleSheet("background-color: #dc3545; color: white; font-weight: bold;")
 
+    def refresh_file_list(self):
+        """Lists files in the working directory."""
+        self.table_files.setRowCount(0)
+        try:
+            files = os.listdir(self.working_directory)
+            files.sort()
+            for f in files:
+                row = self.table_files.rowCount()
+                self.table_files.insertRow(row)
+                
+                # Name
+                item_name = QTableWidgetItem(f)
+                self.table_files.setItem(row, 0, item_name)
+                
+                # Size
+                try:
+                    path = os.path.join(self.working_directory, f)
+                    if os.path.isdir(path):
+                        size_str = "<DIR>"
+                    else:
+                        size = os.path.getsize(path)
+                        size_str = f"{size / 1024:.1f} KB"
+                except:
+                    size_str = "?"
+                
+                item_size = QTableWidgetItem(size_str)
+                item_size.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.table_files.setItem(row, 1, item_size)
+        except Exception as e:
+            print(f"Error listing files: {e}")
+
 # ---------------------------------------------------------
-# 4. MANAGER DIALOG (Existing)
+# 5. MANAGER DIALOG (Existing)
 # ---------------------------------------------------------
 class C2ManagerDialog(QDialog):
     """Dialog to Add/Delete Payloads and Server Templates."""
@@ -365,7 +548,7 @@ class C2ManagerDialog(QDialog):
             self.load_servers()
 
 # ---------------------------------------------------------
-# 5. C2 MAIN WIDGET
+# 6. C2 MAIN WIDGET
 # ---------------------------------------------------------
 class C2Widget(QWidget):
     def __init__(self, working_directory, parent=None):
@@ -379,6 +562,7 @@ class C2Widget(QWidget):
         
         self.listeners = [] # Track listener widgets
         self.servers = []   # Track server widgets
+        self.msf_listeners = [] # Track MSF widgets
         
         self.init_ui()
         self.refresh_ips()
@@ -394,8 +578,8 @@ class C2Widget(QWidget):
             QTabBar::tab { 
                 background: #2f2f40; 
                 color: #aaa; 
-                padding: 12px 50px; 
-                min-width: 150px;
+                padding: 12px 30px; 
+                min-width: 120px;
                 font-size: 14px;
                 font-weight: bold;
             }
@@ -405,13 +589,19 @@ class C2Widget(QWidget):
             }
         """)
         
-        self.tab_shells = QWidget()
-        self.setup_shells_tab()
-        self.tabs.addTab(self.tab_shells, "Reverse Shells & Listeners")
-        
         self.tab_servers = QWidget()
         self.setup_servers_tab()
-        self.tabs.addTab(self.tab_servers, "File Servers & C2")
+        self.tabs.addTab(self.tab_servers, "File Servers")
+
+        self.tab_shells = QWidget()
+        self.setup_shells_tab()
+        self.tabs.addTab(self.tab_shells, "Netcat")
+
+        # NEW MSF TAB
+        self.tab_msf = QWidget()
+        self.setup_msf_tab()
+        self.tabs.addTab(self.tab_msf, "Metasploit")
+        
         
         main_layout.addWidget(self.tabs)
 
@@ -477,7 +667,22 @@ class C2Widget(QWidget):
         splitter.setSizes([350, 550])
         layout.addWidget(splitter)
 
-    # --- TAB 2: SERVERS ---
+    # --- TAB 2: MSF LISTENERS ---
+    def setup_msf_tab(self):
+        layout = QVBoxLayout(self.tab_msf)
+        
+        # We can have multiple MSF tabs if needed
+        self.msf_tabs = QTabWidget()
+        self.msf_tabs.setStyleSheet("QTabBar::tab { padding: 8px 20px; font-size: 12px; min-width: 120px; }")
+
+        for i in range(1, 4):
+            msf = MsfListenerWidget(self.working_directory)
+            self.msf_tabs.addTab(msf, f"MSF Console {i}")
+            self.msf_listeners.append(msf)
+
+        layout.addWidget(self.msf_tabs)
+
+    # --- TAB 3: SERVERS ---
     def setup_servers_tab(self):
         layout = QVBoxLayout(self.tab_servers)
         
@@ -514,6 +719,8 @@ class C2Widget(QWidget):
     def refresh_and_reload(self):
         self.refresh_ips()
         self.load_payload_options()
+        for m in self.msf_listeners:
+            m.refresh_ips()
 
     def refresh_ips(self):
         self.combo_ip.clear()
