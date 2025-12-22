@@ -6,14 +6,41 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QDialog,
                              QVBoxLayout, QLabel, QPushButton, QWidget, 
                              QHBoxLayout, QStackedWidget, QFrame, QAction,
                              QFileDialog, QMessageBox, QListWidget, QLineEdit,
-                             QComboBox, QDateEdit, QTextEdit, QDialogButtonBox)
-from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate
-from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QMovie
+                             QComboBox, QDateEdit, QTextEdit, QDialogButtonBox, QMenu)
+from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate, QTimer
+from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QMovie, QCursor
 import shutil
 
 # Import utilities
 from utils import db as command_db
 from utils import project_db
+
+class ComingSoonWidget(QWidget):
+    """A placeholder widget for tabs currently under development."""
+    def __init__(self, title, subtitle="Coming Soon"):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(20)
+        
+        # Icon/Emoji
+        lbl_icon = QLabel("🚧")
+        lbl_icon.setFont(QFont("Arial", 60))
+        lbl_icon.setStyleSheet("color: #555;")
+        
+        # Main Title
+        lbl_title = QLabel(title)
+        lbl_title.setFont(QFont("Arial", 28, QFont.Bold))
+        lbl_title.setStyleSheet("color: #00d2ff;")
+        
+        # Subtitle/Description
+        lbl_desc = QLabel(subtitle)
+        lbl_desc.setFont(QFont("Arial", 16))
+        lbl_desc.setStyleSheet("color: #888; font-style: italic;")
+        
+        layout.addWidget(lbl_icon, alignment=Qt.AlignCenter)
+        layout.addWidget(lbl_title, alignment=Qt.AlignCenter)
+        layout.addWidget(lbl_desc, alignment=Qt.AlignCenter)
 
 class SimpleTextEditorDialog(QDialog):
     """A simple popup to let the user type in domains or scope IPs manually."""
@@ -511,25 +538,86 @@ class StartupWizard(QDialog):
 class InteractivePokemonLabel(QLabel):
     """
     A clickable label that displays a random Pokemon GIF.
+    Support for 'Petting' (Heart animation) and toggling Walk/Idle states.
     """
     def __init__(self, asset_base_path, parent=None):
         super().__init__(parent)
         self.asset_base_path = asset_base_path
         self.current_movie = None
         
+        # State tracking
+        self.current_mon_path = None
+        self.idle_gif_path = None
+        self.walk_gif_path = None
+        self.is_walking = True
+        self.pokemon_name = ""
+        
         self.setCursor(Qt.PointingHandCursor)
         self.setAlignment(Qt.AlignCenter)
         self.setFixedSize(80, 80) # Size for the sprite area
         self.setStyleSheet("background: transparent;")
         
+        # Heart Overlay (Hidden by default)
+        self.heart_lbl = QLabel(self)
+        self.heart_lbl.setFixedSize(32, 32)
+        # Position slightly offset to look like a speech bubble
+        self.heart_lbl.move(48, 0) 
+        self.heart_lbl.hide()
+        
+        # Load heart resource
+        heart_path = os.path.join(self.asset_base_path, "heart.png")
+        if os.path.exists(heart_path):
+            self.heart_lbl.setPixmap(QPixmap(heart_path).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        
+        # Timer for hiding heart
+        self.heart_timer = QTimer(self)
+        self.heart_timer.setSingleShot(True)
+        self.heart_timer.timeout.connect(self.heart_lbl.hide)
+
+        # Context Menu
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
+
         # Initial load
         self.load_random_pokemon()
 
     def mousePressEvent(self, event):
-        """Click interaction: Change this specific Pokemon."""
-        self.load_random_pokemon()
-        # Call parent event to ensure standard processing if needed
+        """Click interaction: Pet the pokemon."""
+        if event.button() == Qt.LeftButton:
+            self.pet_pokemon()
         super().mousePressEvent(event)
+
+    def show_context_menu(self, position):
+        menu = QMenu(self)
+        action_swap = QAction("Call New Companion", self)
+        action_swap.triggered.connect(self.load_random_pokemon)
+        menu.addAction(action_swap)
+        menu.exec_(self.mapToGlobal(position))
+
+    def pet_pokemon(self):
+        """Show heart and toggle animation state."""
+        # 1. Show Heart
+        self.heart_lbl.show()
+        self.heart_lbl.raise_()
+        self.heart_timer.start(1500) # Hide after 1.5s
+        
+        # 2. Toggle Animation (if both exist)
+        if self.idle_gif_path and self.walk_gif_path:
+            self.is_walking = not self.is_walking
+            new_path = self.walk_gif_path if self.is_walking else self.idle_gif_path
+            self.play_gif(new_path)
+
+    def play_gif(self, path):
+        if not path or not os.path.exists(path): return
+        
+        if self.current_movie:
+            self.current_movie.stop()
+            self.current_movie.deleteLater()
+        
+        self.current_movie = QMovie(path)
+        self.current_movie.setScaledSize(QSize(64, 64))
+        self.setMovie(self.current_movie)
+        self.current_movie.start()
 
     def load_random_pokemon(self):
         """Logic to pick a random GIF from the asset structure."""
@@ -544,7 +632,7 @@ class InteractivePokemonLabel(QLabel):
                 self.setText("No Gens")
                 return
             
-            # 2. Random Gen -> Random Mon -> Random GIF
+            # 2. Random Gen -> Random Mon
             selected_gen = random.choice(gens)
             gen_path = os.path.join(self.asset_base_path, selected_gen)
             
@@ -554,27 +642,30 @@ class InteractivePokemonLabel(QLabel):
             selected_mon = random.choice(pokemons)
             mon_path = os.path.join(gen_path, selected_mon)
             
+            # 3. Identify Idle and Walk GIFs
             gifs = [f for f in os.listdir(mon_path) if f.endswith('.gif')]
-            if not gifs: return
             
-            # Prefer walking animations
-            walk_gifs = [g for g in gifs if 'walk' in g]
-            final_gif = random.choice(walk_gifs) if walk_gifs else random.choice(gifs)
+            # Reset paths
+            self.idle_gif_path = None
+            self.walk_gif_path = None
             
-            full_path = os.path.join(mon_path, final_gif)
+            # Try to find specific files based on naming convention "default_idle_X.gif" / "default_walk_X.gif"
+            # Or fuzzy match
+            for g in gifs:
+                if 'idle' in g: self.idle_gif_path = os.path.join(mon_path, g)
+                if 'walk' in g: self.walk_gif_path = os.path.join(mon_path, g)
             
-            # 3. Setup Movie
-            if self.current_movie:
-                self.current_movie.stop()
-                self.current_movie.deleteLater()
-                self.current_movie = None
-                
-            self.current_movie = QMovie(full_path)
-            self.current_movie.setScaledSize(QSize(64, 64)) # The "Zoomed out" sprite size
-            self.setMovie(self.current_movie)
-            self.current_movie.start()
+            # Fallback if specific names not found
+            if not self.idle_gif_path and gifs: self.idle_gif_path = os.path.join(mon_path, gifs[0])
+            if not self.walk_gif_path and gifs: self.walk_gif_path = os.path.join(mon_path, gifs[-1])
             
-            self.setToolTip(f"{selected_mon.title()} ({selected_gen})")
+            self.pokemon_name = f"{selected_mon.title()} ({selected_gen})"
+            self.setToolTip(f"{self.pokemon_name}\n(Left Click to Pet)\n(Right Click to Swap)")
+            
+            # Start Walking by default
+            self.is_walking = True
+            initial_path = self.walk_gif_path if self.walk_gif_path else self.idle_gif_path
+            self.play_gif(initial_path)
             
         except Exception as e:
             print(f"Error loading Pokemon sprite: {e}")
@@ -811,6 +902,12 @@ class CyberSecBuddyApp(QMainWindow):
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
 
+        # Initialize Placeholders for Coming Soon Features
+        self.mitm_tab = ComingSoonWidget("Relaying & MITM", "Tools for ARP spoofing, SMB relaying, and traffic interception.")
+        self.phishing_tab = ComingSoonWidget("Phishing Campaigns", "Manage templates and track credentials.")
+        self.cve_tab = ComingSoonWidget("CVE Search", "Integration with Snyk and CVEmap.")
+        self.payload_tab = ComingSoonWidget("Payload Generation", "Wrappers for msfvenom and OpenSSL.")
+
         self.content_stack = QStackedWidget()
         self.content_stack.addWidget(self.scan_control_tab)
         self.content_stack.addWidget(self.attack_vectors_widget) 
@@ -819,11 +916,34 @@ class CyberSecBuddyApp(QMainWindow):
         self.content_stack.addWidget(self.exploiting_widget)
         self.content_stack.addWidget(self.bruteforce_widget)
         self.content_stack.addWidget(self.c2_tab)
+
+        # Add NEW modules
+        self.content_stack.addWidget(self.mitm_tab)
+        self.content_stack.addWidget(self.phishing_tab)
+        self.content_stack.addWidget(self.cve_tab)
+        self.content_stack.addWidget(self.payload_tab)
+
         self.content_stack.addWidget(self.report_tab)
         self.content_stack.addWidget(self.dashboard_tab)
 
+
         self.sidebar_btns = []
-        labels = ["Scan Control", "Threat Modeling", "Enumeration", "Playground", "Exploiting", " Bruteforce", "C2 / Listeners", "Reporting", "Dashboard"]
+        self.sidebar_btns = []
+        labels = [
+            "📡 Scan Control", 
+            "🛡️ Threat Modeling", 
+            "🔍 Enumeration", 
+            "🎡 Playground", 
+            "💥 Exploiting", 
+            "🔓 Bruteforce", 
+            "🎧 C2 / Listeners",
+            "🔁 Relaying / MITM",   # New
+            "🎣 Phishing",          # New
+            "📋 CVE Search",        # New
+            "📦 Payload Gen",       # New
+            "📝 Reporting", 
+            "📊 Dashboard"
+        ]
         for i, label in enumerate(labels):
             btn = QPushButton(label)
             btn.setCheckable(True)
