@@ -785,6 +785,9 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.exploiting import ExploitingWidget
         from modules.cve_search import CVESearchWidget
         from modules.payload_gen import PayloadGenWidget
+        from modules.privesc_map import PrivEscWidget
+        from modules.post_exploitation import PostExploitationWidget
+        from modules.active_directory import ActiveDirectoryWidget
 
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
@@ -830,6 +833,9 @@ class CyberSecBuddyApp(QMainWindow):
         self.payload_tab = PayloadGenWidget(project_folder=project_folder)
 
         self.exploiting_widget = ExploitingWidget(project_path=project_folder)
+        self.privesc_tab = PrivEscWidget()
+        self.post_exp_tab = PostExploitationWidget()
+        self.ad_tab = ActiveDirectoryWidget()
 
         if self.engagement_type == "Pentest":
             self.setup_pentest_ui()
@@ -941,7 +947,6 @@ class CyberSecBuddyApp(QMainWindow):
 
         # Initialize Placeholders for Coming Soon Features
         self.mitm_tab = ComingSoonWidget("Relaying & MITM", "Tools for ARP spoofing, SMB relaying, and traffic interception.")
-        self.phishing_tab = ComingSoonWidget("Phishing Campaigns", "Manage templates and track credentials.")
 
         self.content_stack = QStackedWidget()
         self.content_stack.addWidget(self.scan_control_tab)
@@ -951,10 +956,12 @@ class CyberSecBuddyApp(QMainWindow):
         self.content_stack.addWidget(self.exploiting_widget)
         self.content_stack.addWidget(self.bruteforce_widget)
         self.content_stack.addWidget(self.c2_tab)
+        self.content_stack.addWidget(self.privesc_tab)
+        self.content_stack.addWidget(self.post_exp_tab)
+        self.content_stack.addWidget(self.ad_tab)
 
         # Add NEW modules
         self.content_stack.addWidget(self.mitm_tab)
-        self.content_stack.addWidget(self.phishing_tab)
         self.content_stack.addWidget(self.cve_tab)
         self.content_stack.addWidget(self.payload_tab)
 
@@ -972,8 +979,10 @@ class CyberSecBuddyApp(QMainWindow):
             "💥 Exploiting", 
             "🔓 Bruteforce", 
             "🎧 C2 / Listeners",
+            "🧗 Privilege Escalation",
+            "🏴‍☠️ Post Exploitation",
+            "🏰 Active Directory",
             "🔁 Relaying / MITM",   # New
-            "🎣 Phishing",          # New
             "📋 CVE Search",        # New
             "📦 Payload Gen",       # New
             "📝 Reporting", 
