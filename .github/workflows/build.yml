@@ -1,0 +1,63 @@
+name: Build AppImage
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:  # Allows you to click a button to build manually
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04  # <--- This solves the glibc/Kali issue!
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller pillow
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Build with PyInstaller
+      run: |
+        # Build the app using the same command you used locally
+        pyinstaller --noconfirm --onedir --windowed --clean \
+          --name "CyberSecBuddy" \
+          --add-data "themes:themes" \
+          --add-data "utils:utils" \
+          --add-data "modules:modules" \
+          --add-data "resources:resources" \
+          main.py
+
+    - name: Prepare AppDir
+      run: |
+        # Create the specific folder structure linuxdeploy expects
+        mkdir -p AppDir/usr/bin
+        # Copy the PyInstaller output (including _internal) to the AppDir
+        cp -r dist/CyberSecBuddy/* AppDir/usr/bin/
+
+    - name: Package AppImage
+      run: |
+        # Download linuxdeploy
+        wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+        chmod +x linuxdeploy-x86_64.AppImage
+        
+        # Build the final image
+        export ARCH=x86_64
+        ./linuxdeploy-x86_64.AppImage \
+          --appdir AppDir \
+          -e AppDir/usr/bin/CyberSecBuddy \
+          -i resources/img/app.png \
+          -d resources/cybersecbuddy.desktop \
+          --output appimage
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: CyberSecBuddy-AppImage
+        path: CyberSec_Buddy-*.AppImage

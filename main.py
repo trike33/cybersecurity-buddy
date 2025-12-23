@@ -16,6 +16,16 @@ import socket
 from utils import db as command_db
 from utils import project_db
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    return os.path.join(base_path, relative_path)
+
 class ComingSoonWidget(QWidget):
     """A placeholder widget for tabs currently under development."""
     def __init__(self, title, subtitle="Coming Soon"):
@@ -86,7 +96,7 @@ class StartupWizard(QDialog):
             return socket.gethostname()
 
         # Determine the wallpaper directory based on the hostname
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        base_path = resource_path(".")
         current_hostname = get_current_hostname()
         hostname_test = False
 
@@ -700,7 +710,7 @@ class PokemonCompanionWidget(QWidget):
         super().__init__(parent)
         self.setFixedHeight(140) # Compact height
         
-        self.asset_base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "themes", "pokemon_assets")
+        self.asset_base_path = resource_path(os.path.join("themes", "pokemon_assets"))
         
         # Main Layout
         self.layout = QVBoxLayout(self)
@@ -795,7 +805,7 @@ class CyberSecBuddyApp(QMainWindow):
             self.setWindowTitle(f"Cybersecurity Buddy - [{self.engagement_type}]")
             self.working_directory = os.path.expanduser("~")
             
-        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        self.base_path = resource_path(".")
         self.icon_path = os.path.join(self.base_path, "resources", "img")
 
         app_icon_path = os.path.join(self.icon_path, "app.png")
@@ -1026,8 +1036,6 @@ class CyberSecBuddyApp(QMainWindow):
         
         if hasattr(self, 'scan_control_tab'):
             self.scan_control_tab.apply_theme(theme_mode)
-        if hasattr(self, 'playground_tab'):
-            self.playground_tab.apply_theme()
 
     def open_user_terminal_dialog(self):
         self.term_window = QDialog(self)
@@ -1074,7 +1082,7 @@ if __name__ == "__main__":
 
     command_db.initialize_db()
 
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "img", "app.png")
+    icon_path = resource_path(os.path.join("resources", "img", "app.png"))
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 

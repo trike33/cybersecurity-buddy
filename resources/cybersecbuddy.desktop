@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=CyberSec Buddy
+Comment=Your cozy companion for security engagements
+Exec=CyberSecBuddy
+Icon=app
+Categories=Utility;Security;
+Terminal=false

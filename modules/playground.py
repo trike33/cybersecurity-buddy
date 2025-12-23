@@ -1,24 +1,241 @@
 import os
 import re
+import html
 from urllib.parse import urlparse
 from collections import Counter
 import webbrowser
+import subprocess
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QDialog,
     QTableView, QHeaderView, QMessageBox, QPushButton, QHBoxLayout,
     QTextEdit, QDialogButtonBox, QTabWidget, QListWidget, QLabel, QMenu,
-    QStyleOption, QStyle
+    QStyleOption, QStyle, QLineEdit, QCheckBox, QApplication, QFrame
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor, QBrush, QPainter, QPixmap
-from utils import db as command_db
-from .dialogs import FuzzerDialog
-import subprocess
+from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import (
+    QIcon, QStandardItemModel, QStandardItem, QColor, QBrush, 
+    QPainter, QPixmap, QFont, QKeySequence
+)
 
 # --- Matplotlib Integration ---
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+
+from utils import db as command_db
+from .dialogs import FuzzerDialog
+
+# ==========================================
+#       NEW: Enhanced Terminal Log Viewer
+# ==========================================
+
+class TerminalLogViewer(QDialog):
+    """
+    A robust viewer for raw terminal output files.
+    Features: ANSI color rendering, Search, Zooming, and Line wrapping.
+    """
+    def __init__(self, file_path, parent=None):
+        super().__init__(parent)
+        self.file_path = file_path
+        self.setWindowTitle(f"Log Viewer - {os.path.basename(file_path)}")
+        self.resize(1000, 700)
+        
+        # --- UI Setup ---
+        layout = QVBoxLayout(self)
+        
+        # Toolbar
+        toolbar_layout = QHBoxLayout()
+        
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Find...")
+        self.search_input.returnPressed.connect(self.find_next)
+        self.search_input.setMaximumWidth(300)
+        
+        self.btn_next = QPushButton("↓")
+        self.btn_next.setFixedWidth(30)
+        self.btn_next.clicked.connect(self.find_next)
+        
+        self.btn_prev = QPushButton("↑")
+        self.btn_prev.setFixedWidth(30)
+        self.btn_prev.clicked.connect(self.find_prev)
+        
+        self.check_wrap = QCheckBox("Word Wrap")
+        self.check_wrap.setChecked(True)
+        self.check_wrap.toggled.connect(self.toggle_wrap)
+        
+        self.zoom_in_btn = QPushButton("+")
+        self.zoom_in_btn.setFixedWidth(30)
+        self.zoom_in_btn.clicked.connect(self.zoom_in)
+        
+        self.zoom_out_btn = QPushButton("-")
+        self.zoom_out_btn.setFixedWidth(30)
+        self.zoom_out_btn.clicked.connect(self.zoom_out)
+
+        toolbar_layout.addWidget(QLabel("Search:"))
+        toolbar_layout.addWidget(self.search_input)
+        toolbar_layout.addWidget(self.btn_prev)
+        toolbar_layout.addWidget(self.btn_next)
+        toolbar_layout.addStretch()
+        toolbar_layout.addWidget(self.check_wrap)
+        toolbar_layout.addWidget(QLabel("Zoom:"))
+        toolbar_layout.addWidget(self.zoom_out_btn)
+        toolbar_layout.addWidget(self.zoom_in_btn)
+        
+        layout.addLayout(toolbar_layout)
+        
+        # Text Area
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        
+        # Set a monospaced font
+        font = QFont("Consolas", 10)
+        font.setStyleHint(QFont.Monospace)
+        self.text_edit.setFont(font)
+        
+        # Dark theme for terminal feel
+        self.text_edit.setStyleSheet("""
+            QTextEdit {
+                background-color: #1b2b42;  /* Light Navy Blue */
+                color: #d8dee9;             /* Soft off-white */
+                border: 2px solid #2e3440;
+                selection-background-color: #4c566a;
+                selection-color: #eceff4;
+            }
+        """)
+        
+        layout.addWidget(self.text_edit)
+        
+        layout.addWidget(self.text_edit)
+        
+        # Close Button
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.accept)
+        layout.addWidget(button_box)
+
+        # Load Content
+        self.load_file_content()
+
+    def load_file_content(self):
+        """Reads the file, converts ANSI codes to HTML, and displays it."""
+        try:
+            with open(self.file_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+                html_content = self.ansi_to_html(content)
+                # Wrap in pre to preserve whitespace, using distinct font family
+                self.text_edit.setHtml(f"<pre style='font-family: Consolas, monospace;'>{html_content}</pre>")
+        except Exception as e:
+            self.text_edit.setPlainText(f"Error reading file:\n{e}")
+
+    def ansi_to_html(self, text):
+        """
+        Converts basic ANSI escape sequences to HTML spans for color.
+        """
+        # Escape HTML special characters first
+        text = html.escape(text)
+
+        # Map ANSI codes to hex colors
+        ansi_colors = {
+            '30': '#3b4252', '31': '#bf616a', '32': '#a3be8c', '33': '#ebcb8b',
+            '34': '#81a1c1', '35': '#b48ead', '36': '#88c0d0', '37': '#e5e9f0',
+            '90': '#4c566a', '91': '#d08770', '92': '#a3be8c', '93': '#ebcb8b',
+            '94': '#5e81ac', '95': '#b48ead', '96': '#8fbcbb', '97': '#eceff4',
+            '0': None,
+        }
+
+        # Regex to find ANSI codes: \x1b[...m
+        pattern = re.compile(r'\x1b\[([\d;]+)m')
+        
+        parts = pattern.split(text)
+        result = []
+        current_span_open = False
+
+        # The first part is always text before any code
+        result.append(parts[0])
+
+        for i in range(1, len(parts), 2):
+            code_str = parts[i]
+            text_chunk = parts[i+1]
+            
+            codes = code_str.split(';')
+            color_code = None
+            
+            # Simple parser: just grab the last color code
+            for c in codes:
+                if c in ansi_colors:
+                    if c == '0':
+                        color_code = 'RESET'
+                    else:
+                        color_code = ansi_colors[c]
+
+            if color_code == 'RESET':
+                if current_span_open:
+                    result.append("</span>")
+                    current_span_open = False
+            elif color_code:
+                if current_span_open:
+                    result.append("</span>")
+                result.append(f"<span style='color:{color_code};'>")
+                current_span_open = True
+            
+            result.append(text_chunk)
+            
+        if current_span_open:
+            result.append("</span>")
+            
+        return "".join(result)
+
+    def toggle_wrap(self, checked):
+        if checked:
+            self.text_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        else:
+            self.text_edit.setLineWrapMode(QTextEdit.NoWrap)
+
+    def find_next(self):
+        query = self.search_input.text()
+        if not query: return
+        self.text_edit.find(query)
+
+    def find_prev(self):
+        query = self.search_input.text()
+        if not query: return
+        self.text_edit.find(query, QTextEdit.FindBackward)
+
+    def zoom_in(self):
+        self.text_edit.zoomIn(1)
+
+    def zoom_out(self):
+        self.text_edit.zoomOut(1)
+
+    def keyPressEvent(self, event):
+        # Handle Zoom with Ctrl + / Ctrl -
+        if event.modifiers() & Qt.ControlModifier:
+            if event.key() == Qt.Key_Plus or event.key() == Qt.Key_Equal:
+                self.zoom_in()
+                return
+            elif event.key() == Qt.Key_Minus:
+                self.zoom_out()
+                return
+            elif event.key() == Qt.Key_F:
+                self.search_input.setFocus()
+                return
+        super().keyPressEvent(event)
+        
+    def wheelEvent(self, event):
+        # Handle Zoom with Ctrl + Scroll
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.zoom_in()
+            else:
+                self.zoom_out()
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+# ==========================================
+#       Existing Classes (Unchanged Logic)
+# ==========================================
 
 class StatsChartCanvas(FigureCanvas):
     """A custom canvas for displaying matplotlib charts within a PyQt dialog."""
@@ -52,7 +269,6 @@ class StatsChartCanvas(FigureCanvas):
         self.draw()
 
     def plot_bar_chart(self, labels, values, title, xlabel='Count'):
-        """Generic horizontal bar chart plotting with improved layout."""
         self.axes.clear()
         y_pos = range(len(labels))
         self.axes.barh(y_pos, values, align='center', color='#81a1c1', height=0.6)
@@ -61,18 +277,14 @@ class StatsChartCanvas(FigureCanvas):
         self.axes.invert_yaxis()
         self.axes.set_xlabel(xlabel, fontsize=10)
         self.axes.set_title(title, fontsize=12, fontweight='bold')
-        # Adjust layout to prevent labels from being cut off
         self.fig.tight_layout(rect=[0.1, 0, 0.9, 1])
         self.draw()
 
     def plot_pie_chart(self, labels, sizes, title):
-        """Plots a pie chart."""
         self.axes.clear()
         is_dark_theme = "dark" in self.parent().styleSheet().lower()
         colors = ['#5e81ac', '#bf616a', '#d08770', '#a3be8c', '#b48ead']
-        
         textprops = {'color': 'white' if is_dark_theme else 'black'}
-        
         self.axes.pie(sizes, labels=labels, autopct='%1.1f%%',
                       shadow=True, startangle=90, colors=colors, textprops=textprops)
         self.axes.axis('equal')
@@ -81,7 +293,6 @@ class StatsChartCanvas(FigureCanvas):
         self.draw()
 
 class StatisticsDialog(QDialog):
-    """A dialog with tabs for textual and graphical statistics."""
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.model = model
@@ -91,7 +302,6 @@ class StatisticsDialog(QDialog):
         tab_widget = QTabWidget()
         layout.addWidget(tab_widget)
         
-        # Textual Report Tab
         text_stats_widget = QWidget()
         text_layout = QVBoxLayout(text_stats_widget)
         self.stats_text_edit = QTextEdit(readOnly=True)
@@ -99,7 +309,6 @@ class StatisticsDialog(QDialog):
         text_layout.addWidget(self.stats_text_edit)
         tab_widget.addTab(text_stats_widget, "Textual Report")
         
-        # Charts Tab
         charts_widget = QWidget()
         charts_layout = QHBoxLayout(charts_widget)
         self.column_list = QListWidget()
@@ -114,16 +323,14 @@ class StatisticsDialog(QDialog):
         button_box.accepted.connect(self.accept)
         layout.addWidget(button_box)
 
-        # Call the data processing methods
         self.calculate_and_display_text_stats()
         self.populate_chart_columns()
 
     def calculate_and_display_text_stats(self):
-        """Calculates and displays statistics for each column in the model."""
         stats_report = []
         for col in range(self.model.columnCount()):
             header = self.model.horizontalHeaderItem(col).text()
-            if header == '⭐': continue # Skip the star column
+            if header == '⭐': continue
 
             stats_report.append(f"--- Statistics for Column: '{header}' ---\n")
             values = [self.model.item(row, col).text() for row in range(self.model.rowCount()) if self.model.item(row, col)]
@@ -169,13 +376,12 @@ class StatisticsDialog(QDialog):
         self.stats_text_edit.setText("\n".join(stats_report))
 
     def populate_chart_columns(self):
-        """Adds chartable items to the list, including custom chart types."""
         self.column_list.clear()
-        self.column_list.addItem("Status Code Distribution (Pie Chart)") # Custom pie chart
+        self.column_list.addItem("Status Code Distribution (Pie Chart)")
         
         for col in range(self.model.columnCount()):
             header = self.model.horizontalHeaderItem(col).text()
-            if header in ['Status Code', 'Length', 'Technology', 'Title']: # Only show relevant columns for charting
+            if header in ['Status Code', 'Length', 'Technology', 'Title']:
                 self.column_list.addItem(header)
 
     def update_chart(self, item):
@@ -192,7 +398,6 @@ class StatisticsDialog(QDialog):
                 elif 500 <= code < 600: status_groups['5xx (Server Error)'] += 1
                 else: status_groups['Other'] += 1
             
-            # FIX: Correctly filter and extract labels and sizes
             labels = [k for k, v in status_groups.items() if v > 0]
             sizes = [v for k, v in status_groups.items() if v > 0]
 
@@ -208,29 +413,23 @@ class StatisticsDialog(QDialog):
         values = [self.model.item(row, col_index).text() for row in range(self.model.rowCount())]
 
         if col_name == 'Length':
-            # Create a sorted bar chart for all lengths
             numeric_values = sorted([(int(v), self.model.item(i, 2).text()) for i, v in enumerate(values) if v.isdigit()], reverse=True)
             if not numeric_values: return
             lengths, hosts = zip(*numeric_values)
             self.chart_canvas.plot_bar_chart(hosts, lengths, "Content Length by Host", xlabel="Length (bytes)")
         elif col_name in ['Technology', 'Title', 'Status Code']:
-            # Use the bar chart logic for all items
             counts = Counter(values)
-            all_items = counts.most_common() # Get all items
+            all_items = counts.most_common()
             if not all_items: return
             labels, data = zip(*all_items)
             self.chart_canvas.plot_bar_chart(labels, data, f"Distribution of {col_name}s")
 
-
 class RiskAnalysisDialog(QDialog):
-    """A dedicated window to display categorized, high-risk URLs."""
     def __init__(self, urls, parent=None):
         super().__init__(parent)
         self.urls = urls
         self.setWindowTitle("URL Risk Analysis")
-        self.setGeometry(250, 250, 800, 700) # Increased height for the new section
-
-        # --- Load Keywords from Database ---
+        self.setGeometry(250, 250, 800, 700)
         self.HIGH_RISK_KEYWORDS = command_db.get_high_risk_keywords()
         self.INTERESTING_KEYWORDS = command_db.get_interesting_keywords()
         self.SENSITIVE_EXTENSIONS = [
@@ -243,50 +442,35 @@ class RiskAnalysisDialog(QDialog):
             ".dbf", ".db3", ".accdb", ".mdb", ".sqlcipher", ".gitignore", ".env", 
             ".ini", ".conf", ".properties", ".plist", ".cfg"
         ]
-        
-        # --- Layout ---
         layout = QVBoxLayout(self)
-        
-        # High Risk Section
         layout.addWidget(QLabel("<h2>High Risk URLs</h2>"))
         self.high_risk_display = QTextEdit(readOnly=True)
         layout.addWidget(self.high_risk_display)
-        
-        # Interesting Section
         layout.addWidget(QLabel("<h2>Potentially Interesting URLs</h2>"))
         self.interesting_display = QTextEdit(readOnly=True)
         layout.addWidget(self.interesting_display)
-        
-        # --- New: Sensitive Extensions Section ---
         layout.addWidget(QLabel("<h2>URLs with Sensitive Extensions</h2>"))
         self.sensitive_ext_display = QTextEdit(readOnly=True)
         layout.addWidget(self.sensitive_ext_display)
-        
         close_button = QDialogButtonBox(QDialogButtonBox.Close)
         close_button.rejected.connect(self.reject)
         layout.addWidget(close_button)
-        
         self.analyze_and_display_urls()
 
     def analyze_and_display_urls(self):
-        """Categorizes URLs and displays them in the appropriate text box."""
         high_risk_html = []
         interesting_html = []
         sensitive_ext_html = []
-
         for url in self.urls:
             is_high_risk = any(keyword in url.lower() for keyword in self.HIGH_RISK_KEYWORDS)
             is_interesting = any(keyword in url.lower() for keyword in self.INTERESTING_KEYWORDS)
             has_sensitive_ext = any(url.lower().endswith(ext) for ext in self.SENSITIVE_EXTENSIONS)
-
             if is_high_risk:
                 high_risk_html.append(f'<span style="color: #bf616a;">{url}</span>')
             elif is_interesting:
                 interesting_html.append(f'<span style="color: #ebcb8b;">{url}</span>')
-                
             if has_sensitive_ext:
                 sensitive_ext_html.append(f'<span style="color: #d08770;">{url}</span>')
-        
         self.high_risk_display.setHtml("<br>".join(high_risk_html))
         self.interesting_display.setHtml("<br>".join(interesting_html))
         self.sensitive_ext_display.setHtml("<br>".join(sensitive_ext_html))
@@ -298,10 +482,9 @@ class NumericStandardItem(QStandardItem):
         except ValueError:
             return self.text() < other.text()
 
-
 class PlaygroundWindow(QDialog):
     """
-    A window for viewing httpx results, with a separate dialog for risk analysis.
+    Structured Viewer for httpx/table data.
     """
     def __init__(self, file_paths, terminal_widget, working_directory, parent=None):
         super().__init__(parent)
@@ -311,23 +494,19 @@ class PlaygroundWindow(QDialog):
         self.starred_hosts = set()
         self.starred_hosts_file = os.path.join(self.working_directory, "starred_hosts.txt")
         self.load_starred_hosts()       
-        title = f"Playground Viewer - {os.path.basename(file_paths[0])}" if len(file_paths) == 1 else f"Playground Viewer - {len(file_paths)} files"
+        title = f"Structured Viewer - {os.path.basename(file_paths[0])}" if len(file_paths) == 1 else f"Structured Viewer - {len(file_paths)} files"
         self.setWindowTitle(title)
         self.setGeometry(150, 150, 1100, 700)
 
         main_layout = QVBoxLayout(self)
         top_bar_layout = QHBoxLayout()
-        
         self.risk_button = QPushButton("Analyze URL Risks")
         self.risk_button.clicked.connect(self.show_risk_analysis)
         top_bar_layout.addWidget(self.risk_button)
-        
         top_bar_layout.addStretch()
-
         self.stats_button = QPushButton("View Stats")
         self.stats_button.clicked.connect(self.show_stats)
         top_bar_layout.addWidget(self.stats_button)
-
         main_layout.addLayout(top_bar_layout)
         
         self.table_view = QTableView()
@@ -336,6 +515,8 @@ class PlaygroundWindow(QDialog):
         
         self.model = QStandardItemModel()
         self.model.itemChanged.connect(self.on_item_changed)
+        
+        # Load data, if it fails to find meaningful structured data, we can warn
         self.load_and_parse_data()
 
         self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -343,23 +524,20 @@ class PlaygroundWindow(QDialog):
         self.table_view.doubleClicked.connect(self.on_cell_double_clicked)
 
     def load_starred_hosts(self):
-        """Loads the list of starred hosts from a file."""
         if os.path.exists(self.starred_hosts_file):
             with open(self.starred_hosts_file, 'r') as f:
                 self.starred_hosts = set(line.strip() for line in f)
 
     def save_starred_hosts(self):
-        """Saves the current list of starred hosts to a file with error handling."""
         try:
             with open(self.starred_hosts_file, 'w') as f:
                 for host in sorted(list(self.starred_hosts)):
                     f.write(host + '\n')
         except Exception as e:
-            QMessageBox.critical(self, "Save Error", f"Could not save starred hosts to {self.starred_hosts_file}:\n{e}")
+            QMessageBox.critical(self, "Save Error", f"Could not save starred hosts: {e}")
 
     def on_item_changed(self, item):
-        """Handles starring/unstarring of hosts and saves the changes."""
-        if item.column() == 0: # Star column
+        if item.column() == 0:
             row = item.row()
             host_item = self.model.item(row, 2)
             if host_item:
@@ -369,90 +547,35 @@ class PlaygroundWindow(QDialog):
                 else:
                     self.starred_hosts.discard(host)
                 self.save_starred_hosts()
-    
-    def on_item_changed(self, item):
-        """Handles starring/unstarring of hosts."""
-        if item.column() == 0: # Star column
-            row = item.row()
-            host_item = self.model.item(row, 2) # Host is now at column 2
-            if host_item:
-                host = host_item.text()
-                if item.checkState() == Qt.Checked:
-                    self.starred_hosts.add(host)
-                else:
-                    self.starred_hosts.discard(host)
-
-    def on_cell_double_clicked(self, index):
-        """Opens the URL in a browser when a host is double-clicked."""
-        if index.column() == 2: # Host column
-            self.open_in_browser(index.row())
-
-    def open_context_menu(self, position):
-        indexes = self.table_view.selectedIndexes()
-        if not indexes:
-            return
-        
-        row = indexes[0].row()
-        
-        menu = QMenu()
-        if indexes[0].column() == 2: # Host column
-            open_browser_action = menu.addAction("Open in default browser")
-            open_burp_action = menu.addAction("Open with Burp's Chromium")
-            fuzz_action = menu.addAction("Fuzz with ffuf")
-            menu.addSeparator()
-
-        colorize_menu = menu.addMenu("Colorize Row")
-        colors = {"Red": "#bf616a", "Green": "#a3be8c", "Blue": "#81a1c1", "Yellow": "#ebcb8b", "None": None}
-        for name, color_hex in colors.items():
-            action = colorize_menu.addAction(name)
-            action.triggered.connect(lambda checked, r=row, c=color_hex: self.colorize_row(r, c))
-
-        action = menu.exec_(self.table_view.viewport().mapToGlobal(position))
-        
-        if 'open_browser_action' in locals() and action == open_browser_action:
-            self.open_in_browser(row)
-        elif 'open_burp_action' in locals() and action == open_burp_action:
-            self.open_in_burp_browser(row)
-        elif 'fuzz_action' in locals() and action == fuzz_action:
-            self.open_fuzzer_dialog(row)
 
     def colorize_row(self, row, color_hex):
-        """Applies a background color to an entire row."""
         for col in range(self.model.columnCount()):
             item = self.model.item(row, col)
             if item:
                 if color_hex:
                     item.setBackground(QBrush(QColor(color_hex)))
                 else:
-                    item.setBackground(QBrush()) # Reset to default
-            
+                    item.setBackground(QBrush())
+
     def get_url_from_row(self, row):
-        schema = self.model.item(row, 1).text() # Schema is at column 1
-        host = self.model.item(row, 2).text()   # Host is at column 2
+        schema = self.model.item(row, 1).text()
+        host = self.model.item(row, 2).text()
         path = self.model.item(row, 3).text() if self.model.item(row, 3) else ''
         return f"{schema}://{host}{path}"
 
     def colorize_status_code(self, item, status_code):
-        """Sets the background color of a status code item based on its value."""
-        if 200 <= status_code < 300:
-            color = QColor("green")
-        elif 300 <= status_code < 400:
-            color = QColor("blue")
-        elif 400 <= status_code < 500:
-            color = QColor("orange")
-        elif 500 <= status_code < 600:
-            color = QColor("red")
-        else:
-            # Should not happen, but as a fallback
-            color = QColor("white")
-            
+        if 200 <= status_code < 300: color = QColor("green")
+        elif 300 <= status_code < 400: color = QColor("blue")
+        elif 400 <= status_code < 500: color = QColor("orange")
+        elif 500 <= status_code < 600: color = QColor("red")
+        else: color = QColor("white")
         item.setForeground(color)
 
     def load_and_parse_data(self):
-        """Loads data into the main table view."""
         self.all_records = [rec for fp in self.file_paths for rec in self.parse_httpx_file(fp)]
         if not self.all_records:
-            QMessageBox.warning(self, "No Data", "No valid data could be parsed.")
+            # Not showing error here to allow hybrid usage, 
+            # but ideally this window is only called for valid files.
             return
 
         headers = ['⭐', 'Schema', 'Host', 'Path', 'Extension', 'Status Code', 'Length', 'Technology']
@@ -487,52 +610,33 @@ class PlaygroundWindow(QDialog):
         self.table_view.setColumnWidth(0, 30)
     
     def on_cell_double_clicked(self, index):
-        """Opens the URL in a browser when a host is double-clicked."""
-        if index.column() == 1: # Host column
+        if index.column() == 2:
             self.open_in_browser(index.row())
 
     def open_context_menu(self, position):
         index = self.table_view.indexAt(position)
-        if not index.isValid():
-            return
-            
+        if not index.isValid(): return
         row = index.row()
-        
         menu = QMenu()
-        
-        # --- Row-level Actions ---
         colorize_menu = menu.addMenu("Colorize Row")
         colors = {"Red": "#bf616a", "Green": "#a3be8c", "Blue": "#81a1c1", "Yellow": "#ebcb8b", "None": None}
         for name, color_hex in colors.items():
             action = colorize_menu.addAction(name)
             action.triggered.connect(lambda checked, r=row, c=color_hex: self.colorize_row(r, c))
 
-        # --- Host-specific Actions ---
-        if index.column() == 2: # Only show these for the 'Host' column
+        if index.column() == 2:
             menu.addSeparator()
             open_browser_action = menu.addAction("Open in default browser")
             open_burp_action = menu.addAction("Open with Burp's Chromium")
             fuzz_action = menu.addAction("Fuzz with ffuf")
-            
-            # Execute the menu and handle the selected action
             action = menu.exec_(self.table_view.viewport().mapToGlobal(position))
             
-            if action == open_browser_action:
-                self.open_in_browser(row)
-            elif action == open_burp_action:
-                self.open_in_burp_browser(row)
-            elif action == fuzz_action:
-                self.open_fuzzer_dialog(row)
+            if action == open_browser_action: self.open_in_browser(row)
+            elif action == open_burp_action: self.open_in_burp_browser(row)
+            elif action == fuzz_action: self.open_fuzzer_dialog(row)
         else:
-            # For other columns, just show the colorize menu
             menu.exec_(self.table_view.viewport().mapToGlobal(position))
             
-    def get_url_from_row(self, row):
-        schema = self.model.item(row, 0).text()
-        host = self.model.item(row, 1).text()
-        path = self.model.item(row, 2).text() if self.model.item(row, 2) else ''
-        return f"{schema}://{host}{path}"
-
     def open_in_browser(self, row):
         url = self.get_url_from_row(row)
         webbrowser.open_new_tab(url)
@@ -542,37 +646,25 @@ class PlaygroundWindow(QDialog):
         try:
             chromium_path = "/usr/bin/chromium" 
             subprocess.Popen([chromium_path, "--proxy-server=127.0.0.1:8080", "--ignore-certificate-errors", url])
-        except FileNotFoundError:
-            QMessageBox.critical(self, "Browser Not Found", "Could not find Chromium. Please ensure it's installed and in your PATH.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not launch browser: {e}")
 
     def open_fuzzer_dialog(self, row):
         url = self.get_url_from_row(row)
-        # Ensure the URL for fuzzing ends with a slash
-        if not url.endswith('/'):
-            url += '/'
+        if not url.endswith('/'): url += '/'
         dialog = FuzzerDialog(url=url, parent=self)
         if dialog.exec_() == QDialog.Accepted and dialog.command:
             self.terminal_widget.add_command_to_slot(dialog.command)
 
     def show_risk_analysis(self):
-        """Opens the new dialog for viewing categorized risks."""
         if not hasattr(self, 'all_records') or not self.all_records:
             QMessageBox.information(self, "No Data", "There are no URLs to analyze.")
             return
-        
-        # Compile a list of full URLs to pass to the dialog
-        full_urls = [
-            f"{rec.get('schema', '')}://{rec.get('host', '')}{rec.get('path', '')}" 
-            for rec in self.all_records
-        ]
-        
+        full_urls = [f"{rec.get('schema', '')}://{rec.get('host', '')}{rec.get('path', '')}" for rec in self.all_records]
         dialog = RiskAnalysisDialog(full_urls, self)
         dialog.exec_()
 
     def parse_httpx_file(self, file_path):
-        """Parses a single httpx output file."""
         records = []
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         line_regex = re.compile(
@@ -596,8 +688,8 @@ class PlaygroundWindow(QDialog):
                         'extension': extension if extension else 'N/A', 'status_code': int(final_status_code),
                         'length': int(data['length']), 'technology': data.get('technology', 'N/A').strip()
                     })
-        except Exception as e:
-            QMessageBox.critical(self, "File Error", f"Could not read/parse {os.path.basename(file_path)}: {e}")
+        except Exception:
+            pass # Fail silently so we don't break on non-httpx files
         return records
 
     def show_stats(self):
@@ -607,32 +699,49 @@ class PlaygroundWindow(QDialog):
         dialog = StatisticsDialog(self.model, self)
         dialog.exec_()
 
+# ==========================================
+#       Updated: PlaygroundTabWidget
+# ==========================================
+
 class PlaygroundTabWidget(QWidget):
-    """The main widget for the 'Playground' tab, using a grouped tree view."""
+    """
+    The main widget for the 'Playground' tab.
+    Added Features: Zooming with Ctrl+Scroll, Enhanced File Opening.
+    """
     def __init__(self, working_directory, icon_path, terminal_widget, hostname_test=False, parent=None):
         super().__init__(parent)
         self.working_directory = working_directory
         self.icon_path = icon_path
         self.terminal_widget = terminal_widget
         
-        # --- Background Image Setup ---
+        # Zoom state
+        self.font_size = 20
+        
+        # Background Setup
         self.bg_pixmap = None
         if hostname_test:
-            # Assumes file structure: root/themes/img/pokemon/playground_bg.png
-            # and this file is in root/modules/playground.py
             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             bg_path = os.path.join(base_path, "themes", "img", "pokemon", "playground_bg.png")
             if os.path.exists(bg_path):
                 self.bg_pixmap = QPixmap(bg_path)
-                
 
         layout = QVBoxLayout(self)
         self.tree_widget = QTreeWidget()
         self.tree_widget.setHeaderHidden(True)
         self.tree_widget.setSelectionMode(QTreeWidget.ExtendedSelection)
-        self.tree_widget.itemDoubleClicked.connect(self.open_selected_items)
+        self.tree_widget.itemDoubleClicked.connect(self.open_smart)
+
+        font = self.tree_widget.font()
+        font.setPointSize(self.font_size)
+        self.tree_widget.setFont(font)
         
-        # If we have a background, make the tree transparent so we can see it
+        icon_size = self.font_size + 8
+        self.tree_widget.setIconSize(QSize(icon_size, icon_size))
+        
+        # Context menu for "Open As..."
+        self.tree_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree_widget.customContextMenuRequested.connect(self.open_context_menu)
+
         if self.bg_pixmap:
             self.tree_widget.setStyleSheet("""
                 QTreeWidget { background-color: transparent; }
@@ -642,52 +751,128 @@ class PlaygroundTabWidget(QWidget):
             
         layout.addWidget(self.tree_widget)
         
-        open_button_layout = QHBoxLayout()
-        open_button = QPushButton("Open Selected File(s)")
-        open_button.clicked.connect(self.open_selected_items)
-        open_button_layout.addStretch()
-        open_button_layout.addWidget(open_button)
-        layout.addLayout(open_button_layout)
+        # Button bar
+        btn_layout = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self.refresh_playground)
+        open_btn = QPushButton("Open Selected")
+        open_btn.clicked.connect(self.open_smart)
+        btn_layout.addWidget(refresh_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(open_btn)
+        layout.addLayout(btn_layout)
         
         self.refresh_playground()
 
+    def wheelEvent(self, event):
+        """Handle Zoom In/Out with Ctrl + Wheel on the tree widget area."""
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.font_size += 1
+            else:
+                self.font_size = max(6, self.font_size - 1)
+            
+            # Apply new font size to tree items
+            font = self.tree_widget.font()
+            font.setPointSize(self.font_size)
+            self.tree_widget.setFont(font)
+            
+            # Resize icons slightly to match text
+            icon_size = max(16, self.font_size + 6)
+            self.tree_widget.setIconSize(QSize(icon_size, icon_size))
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
     def paintEvent(self, event):
-        """Override paintEvent to draw the background image."""
         opt = QStyleOption()
         opt.initFrom(self)
         p = QPainter(self)
-        
         if self.bg_pixmap and not self.bg_pixmap.isNull():
-            # Draw the background image scaled to fill the widget
             p.drawPixmap(self.rect(), self.bg_pixmap)
         else:
-            # Fallback to standard widget styling
             self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
 
-    def open_selected_items(self):
+    def open_context_menu(self, position):
+        item = self.tree_widget.itemAt(position)
+        if not item: return
+        
+        menu = QMenu()
+        open_table_action = menu.addAction("Open in Structured Viewer (Table)")
+        open_log_action = menu.addAction("Open in Log Viewer (Text)")
+        
+        action = menu.exec_(self.tree_widget.viewport().mapToGlobal(position))
+        
+        if action == open_table_action:
+            self.open_selection_as_table()
+        elif action == open_log_action:
+            self.open_selection_as_log()
+
+    def open_smart(self):
+        """
+        Decides whether to open as a Table (if it looks like structured data) 
+        or as a Log (default).
+        """
         selected_items = self.tree_widget.selectedItems()
-        if not selected_items:
-            QMessageBox.information(self, "No Selection", "Please select one or more files to open.")
-            return
-        file_paths = []
-        for item in selected_items:
-            path = item.data(0, Qt.UserRole)
-            if path and os.path.isfile(path):
-                file_paths.append(path)
-        if not file_paths:
-            QMessageBox.warning(self, "No Files Selected", "Your selection does not contain any valid files.")
-            return
-            
-        viewer_window = PlaygroundWindow(
-            file_paths=file_paths, 
-            terminal_widget=self.terminal_widget, 
-            working_directory=self.working_directory, 
-            parent=self
-        )
-        viewer_window.exec_()
+        if not selected_items: return
+        
+        # Grab the first file to test content
+        path = selected_items[0].data(0, Qt.UserRole)
+        if not path or not os.path.isfile(path): return
+
+        if self.is_structured_httpx_file(path):
+            self.open_selection_as_table()
+        else:
+            self.open_selection_as_log()
+
+    def is_structured_httpx_file(self, path):
+        """Checks if the first few lines of a file match the httpx regex."""
+        try:
+            line_regex = re.compile(
+                r"^https?://[^\s]+\s+\[\s*[\d,\s]+\s*\]\s+\[\s*\d+\s*\]"
+            )
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                for _ in range(5): # Check first 5 lines
+                    line = f.readline()
+                    if not line: break
+                    clean = ansi_escape.sub('', line).strip()
+                    if line_regex.match(clean):
+                        return True
+        except:
+            pass
+        return False
+
+    def open_selection_as_table(self):
+        selected_items = self.tree_widget.selectedItems()
+        file_paths = [item.data(0, Qt.UserRole) for item in selected_items if item.data(0, Qt.UserRole) and os.path.isfile(item.data(0, Qt.UserRole))]
+        
+        if not file_paths: return
+        
+        # Check if actually parsable
+        valid_files = [fp for fp in file_paths if self.is_structured_httpx_file(fp)]
+        
+        if not valid_files:
+             QMessageBox.warning(self, "Format Error", "Selected file(s) do not appear to be structured httpx output.\nOpening in Log Viewer instead.")
+             self.open_selection_as_log()
+             return
+
+        viewer = PlaygroundWindow(valid_files, self.terminal_widget, self.working_directory, self)
+        viewer.exec_()
+
+    def open_selection_as_log(self):
+        selected_items = self.tree_widget.selectedItems()
+        file_paths = [item.data(0, Qt.UserRole) for item in selected_items if item.data(0, Qt.UserRole) and os.path.isfile(item.data(0, Qt.UserRole))]
+        
+        if not file_paths: return
+
+        # Open a separate window for each file if multiple are selected
+        for fp in file_paths:
+            viewer = TerminalLogViewer(fp, self)
+            viewer.show() # Use show() instead of exec_() so we can open multiple at once
 
     def set_working_directory(self, path):
-        """Updates the working directory and refreshes the file view."""
         self.working_directory = path
         self.refresh_playground()
 
@@ -698,7 +883,6 @@ class PlaygroundTabWidget(QWidget):
         bag_icon = QIcon(os.path.join(self.icon_path, "bag.svg"))
 
         bags = {}
-
         try:
             for item_name in sorted(os.listdir(self.working_directory)):
                 full_path = os.path.join(self.working_directory, item_name)
@@ -718,27 +902,6 @@ class PlaygroundTabWidget(QWidget):
                     file_item = QTreeWidgetItem(self.tree_widget, [item_name])
                     file_item.setIcon(0, file_icon)
                     file_item.setData(0, Qt.UserRole, full_path)
-            
-            # Expand all bags by default for better visibility
             self.tree_widget.expandAll()
-            
         except Exception as e:
-            QTreeWidgetItem(self.tree_widget, [f"Error reading directory: {e}"])
-
-    def apply_theme(self):
-        self.refresh_playground()
-        
-    def open_fuzzer_dialog(self):
-        selected_items = self.table_view.selectedIndexes()
-        if not selected_items:
-            QMessageBox.information(self, "No Selection", "Please select a host to fuzz.")
-            return
-
-        row = selected_items[0].row()
-        schema = self.model.item(row, 0).text()
-        host = self.model.item(row, 1).text()
-        url = f"{schema}://{host}/"
-
-        dialog = FuzzerDialog(url=url, parent=self)
-        if dialog.exec_() == QDialog.Accepted and dialog.command:
-            self.fuzz_command_generated.emit(dialog.command)
+            QTreeWidgetItem(self.tree_widget, [f"Error: {e}"])
