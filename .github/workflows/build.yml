@@ -1,63 +1,130 @@
-name: Build AppImage
+name: Manual Release Build
 
 on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:  # Allows you to click a button to build manually
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release Version (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      description:
+        description: 'Release Description'
+        required: false
+        default: 'Manual build via GitHub Actions'
 
 jobs:
-  build:
-    runs-on: ubuntu-20.04  # <--- This solves the glibc/Kali issue!
-
+  # --- JOB 1: LINUX BUILD ---
+  build-linux:
+    runs-on: ubuntu-20.04
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with: { python-version: "3.9" }
 
-    - name: Set up Python 3.9
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.9"
+      - name: Install Dependencies
+        run: |
+          pip install pyinstaller pillow pyqt5
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller pillow
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --clean \
+            --name "CyberSecBuddy" \
+            --add-data "themes:themes" \
+            --add-data "utils:utils" \
+            --add-data "modules:modules" \
+            --add-data "resources:resources" \
+            main.py
 
-    - name: Build with PyInstaller
-      run: |
-        # Build the app using the same command you used locally
-        pyinstaller --noconfirm --onedir --windowed --clean \
-          --name "CyberSecBuddy" \
-          --add-data "themes:themes" \
-          --add-data "utils:utils" \
-          --add-data "modules:modules" \
-          --add-data "resources:resources" \
-          main.py
+      - name: Prepare AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp -r dist/CyberSecBuddy/* AppDir/usr/bin/
 
-    - name: Prepare AppDir
-      run: |
-        # Create the specific folder structure linuxdeploy expects
-        mkdir -p AppDir/usr/bin
-        # Copy the PyInstaller output (including _internal) to the AppDir
-        cp -r dist/CyberSecBuddy/* AppDir/usr/bin/
+      - name: Create AppImage
+        run: |
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          export ARCH=x86_64
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            -e AppDir/usr/bin/CyberSecBuddy \
+            -i resources/img/app.png \
+            -d resources/cybersecbuddy.desktop \
+            --output appimage
 
-    - name: Package AppImage
-      run: |
-        # Download linuxdeploy
-        wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-        chmod +x linuxdeploy-x86_64.AppImage
-        
-        # Build the final image
-        export ARCH=x86_64
-        ./linuxdeploy-x86_64.AppImage \
-          --appdir AppDir \
-          -e AppDir/usr/bin/CyberSecBuddy \
-          -i resources/img/app.png \
-          -d resources/cybersecbuddy.desktop \
-          --output appimage
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: CyberSec_Buddy-*.AppImage
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: CyberSecBuddy-AppImage
-        path: CyberSec_Buddy-*.AppImage
+  # --- JOB 2: WINDOWS BUILD ---
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with: { python-version: "3.9" }
+
+      - name: Install Dependencies
+        run: |
+          pip install pyinstaller pillow pyqt5
+          if (Test-Path requirements.txt) { pip install -r requirements.txt }
+
+      - name: Generate Icon (PNG -> ICO)
+        run: |
+          # PowerShell one-liner to create .ico
+          python -c "from PIL import Image; img = Image.open('resources/img/app.png'); img.save('resources/img/app.ico', format='ICO', sizes=[(256, 256)])"
+
+      - name: Build EXE
+        run: |
+          # Note: Semicolons used for Windows paths
+          pyinstaller --noconfirm --onefile --windowed --clean `
+            --name "CyberSecBuddy" `
+            --icon "resources/img/app.ico" `
+            --add-data "themes;themes" `
+            --add-data "utils;utils" `
+            --add-data "modules;modules" `
+            --add-data "resources;resources" `
+            main.py
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/CyberSecBuddy.exe
+
+  # --- JOB 3: RELEASE ---
+  create-release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: ./
+          
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build
+          path: ./
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
+          body: ${{ github.event.inputs.description }}
+          # The wildcard ensures we find the files wherever they are
+          files: |
+            **/*.AppImage
+            **/*.exe
