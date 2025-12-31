@@ -485,7 +485,7 @@ class ReportTabWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to copy image: {e}")
             return
-        markdown_tag = f"\n![Screenshot](images/{filename})\n"
+        markdown_tag = f'\n\n<img src="images/{filename}" style="max-width: 100%; height: auto; display: block ;margin: 10px 0;">\n\n'
         text_widget.insertPlainText(markdown_tag)
         text_widget.setFocus()
 
