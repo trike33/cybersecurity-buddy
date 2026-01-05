@@ -83,7 +83,21 @@ class TerminalUnit(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         
         gb = QGroupBox(f"{self.name} Configuration")
-        gb.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: #00d2ff; border: 1px solid #444; }}")
+        gb.setStyleSheet("""
+    QGroupBox {
+        font-weight: bold;
+        font-size: 16px;        /* 1. Larger text size */
+        color: #00d2ff;
+        border: 1px solid #444;
+        margin-top: 20px;       /* 2. Create space at the top for the title */
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        padding: 0 10px;        /* 3. Add breathing room around the text */
+        left: 10px;             /* 4. Indent the title slightly */
+    }
+""")
         gb_layout = QVBoxLayout(gb)
         
         row_cmd = QHBoxLayout()

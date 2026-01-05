@@ -9,3 +9,4 @@
 - [x] Ability to modify all project project information like client(db), deadline(db), scope(file) and domains(file) 
 - [x] Add a light dark bg faded on the threat modeling map 
 - [x] Output saving on enumeration tab? 
+- [ ] If images are too big, sometimes they get cropped when exporting them to pdf 
