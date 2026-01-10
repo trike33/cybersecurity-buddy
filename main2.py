@@ -110,7 +110,16 @@ class ModuleManager:
 
         # LAZY IMPORTS: We only import inside the `if` block
         try:
-            if module_id == "scan":
+            if module_id == "settings":
+                # Project Settings Dialog
+                dlg = project_db.ProjectEditDialog(None, self.project_db_path)
+                if dlg.exec_() == QDialog.Accepted:
+                    # Update cached data if user changed it
+                    self.project_data = project_db.load_project_data(self.project_db_path)
+                    self.client_name = self.project_data.get('client_name', 'Unknown')
+                return # Not a window, so return early
+
+            elif module_id == "scan":
                 from modules.scan_control import ScanControlWidget
                 widget = ScanControlWidget(self.working_directory, self.icon_path, project_db_path=self.project_db_path)
                 title = "Scan Control"
@@ -152,6 +161,31 @@ class ModuleManager:
                 is_home = socket.gethostname() in whitelisted
                 widget = DashboardWidget(self.project_db_path, hostname_test=is_home)
                 title = "Dashboard"
+
+            elif module_id == "postexp":
+                from modules.post_exploitation import PostExploitationWidget
+                widget = PostExploitationWidget()
+                title = "Post Exploitation"
+
+            elif module_id == "ad":
+                from modules.active_directory import ActiveDirectoryWidget
+                widget = ActiveDirectoryWidget()
+                title = "Active Directory"
+
+            elif module_id == "payload":
+                from modules.payload_gen import PayloadGenWidget
+                widget = PayloadGenWidget(project_folder=self.working_directory)
+                title = "Payload Generator"
+
+            elif module_id == "cve":
+                from modules.cve_search import CVESearchWidget
+                widget = CVESearchWidget()
+                title = "CVE Search"
+
+            elif module_id == "privesc":
+                from modules.privesc_map import PrivEscWidget
+                widget = PrivEscWidget()
+                title = "Privilege Escalation"
 
             elif module_id == "play":
                 from modules.playground import PlaygroundTabWidget
