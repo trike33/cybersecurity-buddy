@@ -2,6 +2,7 @@ import sys
 import os
 import sqlite3
 import math
+import re
 from collections import defaultdict
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QGraphicsView, QGraphicsScene, 
                              QGraphicsItem, QDialog, QHBoxLayout, QLabel, 
@@ -518,9 +519,15 @@ class NodeDetailsDialog(QDialog):
 
     def populate_host_info(self):
         self.ports_list.clear()
-        found_services = set()
+        # Add a third column for Version
+        self.ports_list.setColumnCount(3)
+        self.ports_list.setHeaderLabels(["Port", "Service", "Version"])
         
+        found_services = set()
         self.host_services = {} 
+        
+        # 'versions' is now a dict created in get_all_hosts: {"80": "SimpleHTTPServer 0.6"}
+        ver_map = self.node_data.get('versions', {})
         
         for port in self.node_data['ports']:
             svc, _ = self.db_manager.get_attack_info(port)
@@ -529,6 +536,8 @@ class NodeDetailsDialog(QDialog):
             item = QTreeWidgetItem(self.ports_list)
             item.setText(0, port)
             item.setText(1, svc)
+            item.setText(2, ver_map.get(port, "n/a"))
+            
             found_services.add(svc)
             
         for s in sorted(list(found_services)): 
@@ -612,63 +621,56 @@ class AttackDataManager:
         return os.path.exists(self.network_db_path)
 
     def create_network_db(self):
-        host_port_file = os.path.join(self.project_folder, "naabu_out")
-        host_file = os.path.join(self.project_folder, "scope.txt")
-
-        if not os.path.exists(host_port_file) or not os.path.exists(host_file):
-            return False, "Missing naabu_out or scope.txt"
-
-        host_ports = defaultdict(set)
-        hosts = set()
-
-        try:
-            with open(host_port_file, "r") as f:
-                for line in f:
-                    if ":" in line:
-                        h, p = line.strip().split(":", 1)
-                        host_ports[h].add(p)
-        except Exception as e: return False, str(e)
-
-        try:
-            with open(host_file, "r") as f:
-                for line in f:
-                    if line.strip(): hosts.add(line.strip())
-        except Exception as e: return False, str(e)
-
-        all_hosts = hosts.union(host_ports.keys())
+        nmap_file = os.path.join(self.project_folder, "nmap_out")
         
-        # 1. Create/Update Network Map DB
+        if not os.path.exists(nmap_file):
+            return False, "Missing nmap_out file."
+
+        # Temporary storage: { "IP": {"ports": [], "versions": []} }
+        host_data = defaultdict(lambda: {"ports": [], "versions": []})
+
+        try:
+            current_ip = None
+            with open(nmap_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    
+                    # 1. Capture IP from Nmap report line
+                    ip_match = re.search(r"Nmap scan report for (?:.*\((\d+\.\d+\.\d+\.\d+)\)|(\d+\.\d+\.\d+\.\d+))", line)
+                    if ip_match:
+                        current_ip = ip_match.group(1) if ip_match.group(1) else ip_match.group(2)
+                        continue
+
+                    # 2. Capture Numeric Port (Group 1) and Version String (Group 3)
+                    # Regex matches: [Port]/[Proto] [State] [Service] [Version...]
+                    port_match = re.match(r"^(\d+)/(?:tcp|udp)\s+open\s+[^\s]+\s+(.*)$", line)
+                    if current_ip and port_match:
+                        p_num = port_match.group(1)
+                        v_info = port_match.group(2).strip() or "n/a"
+                        
+                        host_data[current_ip]["ports"].append(p_num)
+                        host_data[current_ip]["versions"].append(v_info)
+
+        except Exception as e:
+            return False, f"Parse Error: {str(e)}"
+
+        # Save to SQLite using your specified structure
         try:
             conn = sqlite3.connect(self.network_db_path)
             cur = conn.cursor()
-            cur.execute("CREATE TABLE IF NOT EXISTS hosts (host TEXT PRIMARY KEY, ports TEXT, live BOOLEAN)")
-            for host in all_hosts:
-                ports = ",".join(sorted(host_ports.get(host, [])))
-                live = host in host_ports
-                cur.execute("INSERT OR REPLACE INTO hosts VALUES (?, ?, ?)", (host, ports, live))
+            cur.execute("DROP TABLE IF EXISTS hosts")
+            cur.execute("CREATE TABLE hosts (host TEXT PRIMARY KEY, ports TEXT, versions TEXT, live BOOLEAN)")
+            
+            for ip, info in host_data.items():
+                ports_str = ",".join(info["ports"])
+                versions_str = "|".join(info["versions"]) # Using pipe to avoid conflict with commas in version names
+                cur.execute("INSERT OR REPLACE INTO hosts VALUES (?, ?, ?, ?)", (ip, ports_str, versions_str, True))
+            
             conn.commit()
             conn.close()
-        except Exception as e: return False, str(e)
-
-        # 2. Populate 'enum' table in project_data.db
-        # We need to resolve port -> service using attack_vectors_db
-        enum_data = []
-        for host, ports in host_ports.items():
-            for port in ports:
-                # Cross-compare with attack_vectors.db to get Service Name
-                service_name, _ = attack_vectors_db.get_vectors_for_port(self.attack_db_path, port)
-                if service_name != "unknown":
-                    enum_data.append({
-                        'host': host,
-                        'port': port,
-                        'service': service_name
-                    })
-        
-        # Sync to Project DB
-        if os.path.exists(self.project_db_path):
-            project_db.sync_enum_data(self.project_db_path, enum_data)
-
-        return True, "Success"
+            return True, "Success"
+        except Exception as e:
+            return False, str(e)
 
     def get_all_hosts(self):
         nodes = []
@@ -676,11 +678,20 @@ class AttackDataManager:
         try:
             conn = sqlite3.connect(self.network_db_path)
             c = conn.cursor()
-            c.execute("SELECT host, ports, live FROM hosts")
+            c.execute("SELECT host, ports, versions, live FROM hosts")
             for r in c.fetchall():
                 ports = [p for p in r[1].split(',') if p]
+                # Reconstruct list from pipe-separated string
+                versions_list = r[2].split('|') if r[2] else []
+                
+                # Build a dictionary for the UI to map port -> version
+                ver_map = dict(zip(ports, versions_list))
+                
                 nodes.append({
-                    "ip": r[0], "ports": ports, "live": bool(r[2]),
+                    "ip": r[0], 
+                    "ports": ports, 
+                    "versions": ver_map, 
+                    "live": bool(r[3]),
                     "type": "Server" if len(ports) > 3 else "Client"
                 })
             conn.close()
@@ -758,17 +769,17 @@ class AttackVectorsWidget(QWidget):
     def check_files_availability(self):
         p_folder = self.db_manager.project_folder
         f1 = os.path.exists(os.path.join(p_folder, "scope.txt"))
-        f2 = os.path.exists(os.path.join(p_folder, "naabu_out"))
+        f2 = os.path.exists(os.path.join(p_folder, "nmap_out"))
         if f1 and f2:
             self.btn_create.setEnabled(True)
-            self.lbl_status.setText("Files found: <span style='color:#0f0'>scope.txt, naabu_out</span>")
+            self.lbl_status.setText("Files found: <span style='color:#0f0'>scope.txt, nmap_out</span>")
         elif f1 or f2:
-            missing = "naabu_out" if f1 else "scope.txt"
+            missing = "nmap_out" if f1 else "scope.txt"
             self.btn_create.setEnabled(False)
             self.lbl_status.setText(f"Missing: <span style='color:#f44'>{missing}</span>")
         else:
             self.btn_create.setEnabled(False)
-            self.lbl_status.setText("Missing: <span style='color:#f44'>scope.txt or naabu_out</span>")
+            self.lbl_status.setText("Missing: <span style='color:#f44'>scope.txt or nmap_out</span>")
 
     def create_db(self):
         ok, msg = self.db_manager.create_network_db()
