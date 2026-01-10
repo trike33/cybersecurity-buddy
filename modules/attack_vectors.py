@@ -668,9 +668,31 @@ class AttackDataManager:
             
             conn.commit()
             conn.close()
-            return True, "Success"
+
         except Exception as e:
             return False, str(e)
+
+        # 2. Populate 'enum' table in project_data.db
+        # We need to resolve port -> service using attack_vectors_db
+        enum_data = []
+        for host, info in host_data.items():
+            for port in info["ports"]:
+                # Cross-compare with attack_vectors.db to get Service Name
+                # Note: port is already a numeric string here
+                service_name, _ = attack_vectors_db.get_vectors_for_port(self.attack_db_path, port)
+                
+                if service_name != "unknown":
+                    enum_data.append({
+                        'host': host,
+                        'port': port,
+                        'service': service_name
+                    })
+        
+        # Sync to Project DB
+        if os.path.exists(self.project_db_path):
+            project_db.sync_enum_data(self.project_db_path, enum_data)
+
+        return True, "Success"
 
     def get_all_hosts(self):
         nodes = []
