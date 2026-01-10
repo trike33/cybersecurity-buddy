@@ -6,25 +6,231 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QDialog,
                              QVBoxLayout, QLabel, QPushButton, QWidget, 
                              QHBoxLayout, QStackedWidget, QFrame, QAction,
                              QFileDialog, QMessageBox, QListWidget, QLineEdit,
-                             QComboBox, QDateEdit, QTextEdit, QDialogButtonBox)
-from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate
-from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap
+                             QComboBox, QDateEdit, QTextEdit, QDialogButtonBox, QMenu)
+from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate, QTimer
+from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QMovie, QCursor
 import shutil
+import socket
+
+# ---------------------------------------------------------
+# SETUP & UTILS
+# ---------------------------------------------------------
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+# Only import lightweight utils here
 from utils.launcher_hub import AppLauncher
-# Import utilities
 from utils import db as command_db
 from utils import project_db
 
-# ... (SimpleTextEditorDialog & StartupWizard classes remain unchanged) ...
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+# ---------------------------------------------------------
+# THE MODULE CONTAINER (The "Window Placeholder")
+# ---------------------------------------------------------
+class ModuleContainerWindow(QMainWindow):
+    """
+    This is a standalone window wrapper for a single module tab.
+    It gives the tab a proper window frame, menus, and styling.
+    """
+    def __init__(self, module_widget, title, project_name, engagement_type, theme="dark"):
+        super().__init__()
+        self.setWindowTitle(f"{title} - {project_name} [{engagement_type}]")
+        self.resize(1100, 750)
+        
+        # 1. Set the central widget to the specific tool (Scan, Exploit, etc.)
+        self.setCentralWidget(module_widget)
+        
+        # 2. Setup Menus (So it feels like a real app)
+        self.setup_menu()
+        
+        # 3. Apply Theme
+        self.apply_theme(theme, engagement_type)
+        
+        # 4. Set Icon
+        icon_path = resource_path(os.path.join("resources", "img", "app.png"))
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
+    def setup_menu(self):
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("File")
+        
+        close_action = QAction("Close Tool", self)
+        close_action.triggered.connect(self.close)
+        file_menu.addAction(close_action)
+        
+        view_menu = menubar.addMenu("View")
+        # You can add theme toggles here if desired
+
+    def apply_theme(self, theme_mode, engagement_type):
+        base_path = resource_path(".")
+        eng_mode = "pentest" if engagement_type == "Pentest" else "bug_bounty"
+        qss_filename = f"{eng_mode}_{theme_mode}.qss"
+        qss_path = os.path.join(base_path, "themes", qss_filename)
+        if os.path.exists(qss_path):
+            with open(qss_path, "r") as f:
+                self.setStyleSheet(f.read())
+
+# ---------------------------------------------------------
+# LAZY MODULE LOADER FACTORY
+# ---------------------------------------------------------
+class ModuleManager:
+    """
+    Handles the lazy loading of modules.
+    Only imports and instantiates what is requested.
+    """
+    def __init__(self, project_db_path, engagement_type):
+        self.project_db_path = project_db_path
+        self.engagement_type = engagement_type
+        
+        # Load basic project data
+        self.project_data = {}
+        if self.project_db_path:
+            self.project_data = project_db.load_project_data(self.project_db_path)
+            
+        self.client_name = self.project_data.get('client_name', 'Unknown')
+        self.working_directory = os.path.dirname(self.project_db_path) if self.project_db_path else os.path.expanduser("~")
+        
+        # Helper for icons
+        self.icon_path = resource_path(os.path.join("resources", "img"))
+        
+        # Keep track of open windows so they don't get garbage collected
+        self.open_windows = []
+
+    def launch_module(self, module_id):
+        widget = None
+        title = "Tool"
+
+        # LAZY IMPORTS: We only import inside the `if` block
+        try:
+            if module_id == "scan":
+                from modules.scan_control import ScanControlWidget
+                widget = ScanControlWidget(self.working_directory, self.icon_path, project_db_path=self.project_db_path)
+                title = "Scan Control"
+
+            elif module_id == "enum":
+                from modules.enumeration import EnumerationWidget
+                widget = EnumerationWidget(self.working_directory, project_db_path=self.project_db_path)
+                title = "Enumeration"
+
+            elif module_id == "threat":
+                from modules.attack_vectors import AttackVectorsWidget
+                widget = AttackVectorsWidget(project_folder=self.working_directory, attack_db_path=None)
+                title = "Threat Modeling"
+
+            elif module_id == "exploit":
+                from modules.exploiting import ExploitingWidget
+                widget = ExploitingWidget(project_path=self.working_directory)
+                title = "Exploitation Framework"
+            
+            elif module_id == "brute":
+                from modules.bruteforce import BruteForceWidget
+                widget = BruteForceWidget(self.working_directory)
+                title = "Brute Force Manager"
+
+            elif module_id == "c2":
+                from modules.c2 import C2Widget
+                widget = C2Widget(self.working_directory)
+                title = "C2 & Listeners"
+
+            elif module_id == "report":
+                from modules.report_tab import ReportTabWidget
+                widget = ReportTabWidget(db_path=self.project_db_path, project_name=self.client_name)
+                title = "Reporting"
+
+            elif module_id == "dashboard":
+                from modules.dashboard import DashboardWidget
+                # Check for hostname logic if needed
+                whitelisted = ["stegosaurus", "ankylo", "kali"]
+                is_home = socket.gethostname() in whitelisted
+                widget = DashboardWidget(self.project_db_path, hostname_test=is_home)
+                title = "Dashboard"
+
+            elif module_id == "play":
+                from modules.playground import PlaygroundTabWidget
+                from modules.custom_commands import CustomCommandsWidget # Dependency
+                term = CustomCommandsWidget(self.working_directory, self.icon_path)
+                # Note: Playground usually needs the terminal passed to it
+                widget = PlaygroundTabWidget(self.working_directory, self.icon_path, term, hostname_test=False)
+                title = "Playground"
+
+            # Add other modules (cve, payload, etc) similarly...
+            else:
+                QMessageBox.information(None, "Coming Soon", f"Module '{module_id}' is not yet linked.")
+                return
+
+            if widget:
+                # Wrap the widget in our Container Window
+                window = ModuleContainerWindow(
+                    module_widget=widget,
+                    title=title,
+                    project_name=self.client_name,
+                    engagement_type=self.engagement_type
+                )
+                window.showMaximized()
+                
+                # Keep reference so it stays open
+                self.open_windows.append(window)
+                # Optional: Clean up closed windows from the list
+                window.destroyed.connect(lambda: self.open_windows.remove(window) if window in self.open_windows else None)
+
+        except Exception as e:
+            QMessageBox.critical(None, "Load Error", f"Failed to load module '{module_id}':\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+# ---------------------------------------------------------
+# PATH HELPER (Fixed Bug)
+# ---------------------------------------------------------
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+# ---------------------------------------------------------
+# HELPER CLASSES
+# ---------------------------------------------------------
+class ComingSoonWidget(QWidget):
+    """A placeholder widget for tabs currently under development."""
+    def __init__(self, title, subtitle="Coming Soon"):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(20)
+        
+        lbl_icon = QLabel("🚧")
+        lbl_icon.setFont(QFont("Arial", 60))
+        lbl_icon.setStyleSheet("color: #555;")
+        
+        lbl_title = QLabel(title)
+        lbl_title.setFont(QFont("Arial", 28, QFont.Bold))
+        lbl_title.setStyleSheet("color: #00d2ff;")
+        
+        lbl_desc = QLabel(subtitle)
+        lbl_desc.setFont(QFont("Arial", 16))
+        lbl_desc.setStyleSheet("color: #888; font-style: italic;")
+        
+        layout.addWidget(lbl_icon, alignment=Qt.AlignCenter)
+        layout.addWidget(lbl_title, alignment=Qt.AlignCenter)
+        layout.addWidget(lbl_desc, alignment=Qt.AlignCenter)
+
 class SimpleTextEditorDialog(QDialog):
-    """A simple popup to let the user type in domains or scope IPs manually."""
     def __init__(self, title, current_text="", parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(400, 300)
         
         layout = QVBoxLayout(self)
-        
         lbl = QLabel("Enter content (one per line):")
         layout.addWidget(lbl)
         
@@ -49,11 +255,19 @@ class StartupWizard(QDialog):
         self.setWindowTitle("CyberSec Buddy - Launcher")
         self.setFixedSize(1200, 900)
 
-        # --- RANDOM WALLPAPER LOGIC ---
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        # --- BACKGROUND LOGIC (Fixed Paths) ---
+        base_path = resource_path(".")
         wallpaper_dir = os.path.join(base_path, "themes", "img")
-        selected_wallpaper = None
         
+        # Check for whitelisted hostname for Pokemon wallpapers
+        whitelisted_hostnames = ['kali', 'stegosaurus', 'ankylo']
+        if socket.gethostname() in whitelisted_hostnames:
+             # Try specific pokemon folder if it exists
+             poke_path = os.path.join(wallpaper_dir, "pokemon")
+             if os.path.exists(poke_path):
+                 wallpaper_dir = poke_path
+
+        selected_wallpaper = None
         if os.path.exists(wallpaper_dir):
             images = [f for f in os.listdir(wallpaper_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             if images:
@@ -108,9 +322,7 @@ class StartupWizard(QDialog):
                 border: 2px solid #4a4a5e; border-radius: 8px; padding: 10px;
                 font-size: 16px;
             }
-            QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QListWidget:focus, QTextEdit:focus {
-                border: 2px solid #00d2ff;
-            }
+            QLineEdit:focus { border: 2px solid #00d2ff; }
             QPushButton {
                 background-color: #2f2f40; color: white;
                 border: 1px solid #4a4a5e; padding: 15px; border-radius: 8px; font-size: 16px;
@@ -127,8 +339,6 @@ class StartupWizard(QDialog):
             QPushButton#BackBtn:hover { color: #00d2ff; }
             QPushButton#ProjectBtn { font-size: 20px; font-weight: bold; padding: 30px; border: 2px solid #4a4a5e; }
             QPushButton#ProjectBtn:hover { border: 2px solid #00d2ff; background-color: #252535; }
-            QFrame { background-color: transparent; border: none; }
-            QDialog { background-color: #1e1e2f; color: #ffffff; }
         """)
 
     def setup_welcome_ui(self):
@@ -513,10 +723,11 @@ class StartupWizard(QDialog):
 # 2. MAIN APPLICATION 
 # ---------------------------------------------------------
 class CyberSecBuddyApp(QMainWindow):
-    def __init__(self, engagement_type="Pentest", project_db_path=None):
+    def __init__(self, engagement_type="Pentest", project_db_path=None, initial_module="dashboard"):
         super().__init__()
         self.restart_requested = False
         
+        # --- FIXED IMPORTS ---
         from modules.scan_control import ScanControlWidget
         from modules.playground import PlaygroundTabWidget
         from modules.custom_commands import CustomCommandsWidget
@@ -527,7 +738,9 @@ class CyberSecBuddyApp(QMainWindow):
         from modules.c2 import C2Widget
         from modules.dashboard import DashboardWidget
         from modules.bruteforce import BruteForceWidget
-        from modules.exploiting import ExploitingWidget
+        # Corrected class name
+        from modules.exploiting import ExploitingWidget  
+        # Missing Modules Added
         from modules.cve_search import CVESearchWidget
         from modules.payload_gen import PayloadGenWidget
         from modules.privesc_map import PrivEscWidget
@@ -537,10 +750,10 @@ class CyberSecBuddyApp(QMainWindow):
         self.engagement_type = engagement_type
         self.project_db_path = project_db_path
         
-        # Guard clause for new projects to ensure path handling
         attack_db_path = None
         client_name = "Target"
-
+        
+        # Hostname Check for Themes
         whitelisted_hostnames = ["stegosaurus", "ankylo", "kali"]
         self.hostname_test = socket.gethostname() in whitelisted_hostnames
         
@@ -553,6 +766,7 @@ class CyberSecBuddyApp(QMainWindow):
             self.setWindowTitle(f"Cybersecurity Buddy - [{self.engagement_type}]")
             self.working_directory = os.path.expanduser("~")
             
+        # --- FIXED PATHING ---
         self.base_path = resource_path(".")
         self.icon_path = os.path.join(self.base_path, "resources", "img")
 
@@ -560,7 +774,7 @@ class CyberSecBuddyApp(QMainWindow):
         if os.path.exists(app_icon_path):
             self.setWindowIcon(QIcon(app_icon_path))
 
-        # Modules
+        # --- MODULE INSTANTIATION ---
         self.scan_control_tab = ScanControlWidget(self.working_directory, self.icon_path, project_db_path=self.project_db_path)
         self.terminal_tab = CustomCommandsWidget(self.working_directory, self.icon_path)
         self.sudo_terminal_tab = SudoTerminalWidget(self.icon_path)
@@ -568,22 +782,24 @@ class CyberSecBuddyApp(QMainWindow):
         self.playground_tab = PlaygroundTabWidget(self.working_directory, self.icon_path, self.terminal_tab, hostname_test=self.hostname_test)
         
         project_folder = os.path.dirname(self.project_db_path) if self.project_db_path else self.working_directory
+        
         self.attack_vectors_widget = AttackVectorsWidget(project_folder=project_folder, attack_db_path=attack_db_path)
-        # UPDATED: Pass project_db_path to EnumerationWidget
         self.enumeration_tab = EnumerationWidget(self.working_directory, project_db_path=self.project_db_path)
         self.c2_tab = C2Widget(self.working_directory)
         self.dashboard_tab = DashboardWidget(self.project_db_path, hostname_test=self.hostname_test)
-        self.cve_tab = CVESearchWidget()
         self.bruteforce_widget = BruteForceWidget(self.working_directory)
-        self.payload_tab = PayloadGenWidget(project_folder=project_folder)
-
+        
+        # New/Fixed Modules
         self.exploiting_widget = ExploitingWidget(project_path=project_folder)
+        self.cve_tab = CVESearchWidget()
+        self.payload_tab = PayloadGenWidget(project_folder=project_folder)
         self.privesc_tab = PrivEscWidget()
         self.post_exp_tab = PostExploitationWidget()
         self.ad_tab = ActiveDirectoryWidget()
+        self.mitm_tab = ComingSoonWidget("Relaying & MITM", "Tools for ARP spoofing, SMB relaying, and traffic interception.")
 
         if self.engagement_type == "Pentest":
-            self.setup_pentest_ui()
+            self.setup_pentest_ui(initial_module)
         else:
             self.setup_bug_bounty_ui()
 
@@ -609,7 +825,6 @@ class CyberSecBuddyApp(QMainWindow):
         session_menu.addAction(action_exit)
 
         tools_menu = menubar.addMenu("Tools")
-               
         tools_menu.addSeparator()
 
         action_settings = QAction("Project Settings", self)
@@ -644,20 +859,17 @@ class CyberSecBuddyApp(QMainWindow):
         theme_menu.addAction(action_light)
 
     def open_project_settings(self):
-        """Opens the ProjectEditDialog and updates UI on save."""
         if not self.project_db_path:
             QMessageBox.warning(self, "No Project", "No active project loaded.")
             return
 
         dlg = project_db.ProjectEditDialog(self, self.project_db_path)
         if dlg.exec_() == QDialog.Accepted:
-            # Refresh Title
             data = project_db.load_project_data(self.project_db_path)
             if data:
                 client = data.get('client_name', 'Unknown')
                 self.setWindowTitle(f"Cybersecurity Buddy - {client} [{self.engagement_type}]")
             
-            # Refresh Scan Control Info Labels if they exist
             if hasattr(self.scan_control_tab, 'load_project_info'):
                 self.scan_control_tab.load_project_info()
                 self.scan_control_tab.lbl_target.setText(f"TARGET: {client}")
@@ -676,7 +888,7 @@ class CyberSecBuddyApp(QMainWindow):
         self.tabs.addTab(self.report_tab, "Reporting")
         self.tabs.addTab(self.c2_tab, "C2 & Listeners")
 
-    def setup_pentest_ui(self):
+    def setup_pentest_ui(self, initial_module):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
@@ -690,31 +902,25 @@ class CyberSecBuddyApp(QMainWindow):
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(0)
 
-        # Initialize Placeholders for Coming Soon Features
-        self.mitm_tab = ComingSoonWidget("Relaying & MITM", "Tools for ARP spoofing, SMB relaying, and traffic interception.")
-
         self.content_stack = QStackedWidget()
-        self.content_stack.addWidget(self.scan_control_tab)
-        self.content_stack.addWidget(self.attack_vectors_widget) 
-        self.content_stack.addWidget(self.enumeration_tab)
-        self.content_stack.addWidget(self.playground_tab)
-        self.content_stack.addWidget(self.exploiting_widget)
-        self.content_stack.addWidget(self.bruteforce_widget)
-        self.content_stack.addWidget(self.c2_tab)
-        self.content_stack.addWidget(self.privesc_tab)
-        self.content_stack.addWidget(self.post_exp_tab)
-        self.content_stack.addWidget(self.ad_tab)
+        
+        # --- FIXED STACK ORDER (Matches Main.py) ---
+        self.content_stack.addWidget(self.scan_control_tab)    # 0
+        self.content_stack.addWidget(self.attack_vectors_widget) # 1
+        self.content_stack.addWidget(self.enumeration_tab)     # 2
+        self.content_stack.addWidget(self.playground_tab)      # 3
+        self.content_stack.addWidget(self.exploiting_widget)   # 4
+        self.content_stack.addWidget(self.bruteforce_widget)   # 5
+        self.content_stack.addWidget(self.c2_tab)              # 6
+        self.content_stack.addWidget(self.privesc_tab)         # 7
+        self.content_stack.addWidget(self.post_exp_tab)        # 8
+        self.content_stack.addWidget(self.ad_tab)              # 9
+        self.content_stack.addWidget(self.mitm_tab)            # 10
+        self.content_stack.addWidget(self.cve_tab)             # 11
+        self.content_stack.addWidget(self.payload_tab)         # 12
+        self.content_stack.addWidget(self.report_tab)          # 13
+        self.content_stack.addWidget(self.dashboard_tab)       # 14
 
-        # Add NEW modules
-        self.content_stack.addWidget(self.mitm_tab)
-        self.content_stack.addWidget(self.cve_tab)
-        self.content_stack.addWidget(self.payload_tab)
-
-        self.content_stack.addWidget(self.report_tab)
-        self.content_stack.addWidget(self.dashboard_tab)
-
-
-        self.sidebar_btns = []
         self.sidebar_btns = []
         labels = [
             "📡 Scan Control", 
@@ -727,12 +933,13 @@ class CyberSecBuddyApp(QMainWindow):
             "🧗 Privilege Escalation",
             "🏴‍☠️ Post Exploitation",
             "🏰 Active Directory",
-            "🔁 Relaying / MITM",   # New
-            "📋 CVE Search",        # New
-            "📦 Payload Gen",       # New
+            "🔁 Relaying / MITM",
+            "📋 CVE Search",
+            "📦 Payload Gen",
             "📝 Reporting", 
             "📊 Dashboard"
         ]
+        
         for i, label in enumerate(labels):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -743,30 +950,27 @@ class CyberSecBuddyApp(QMainWindow):
         sidebar_layout.addStretch()
         main_layout.addWidget(self.sidebar)
         main_layout.addWidget(self.content_stack)
-        self.sidebar_btns[0].click()
-
-        # --- POKEMON COMPANION (VSCODE PORT) ---
-        # "Universability": Uses standard Qt Widgets
-        # "Stability": No webviews or external node processes
         
-        sidebar_layout.addStretch() # Ensure it's at the bottom
+        # --- Handle Initial Module Jump ---
+        # Map launcher IDs to new Stack Indices
+        module_map = {
+            "scan": 0, "threat": 1, "enum": 2, "play": 3,
+            "exploit": 4, "brute": 5, "c2": 6, "report": 13, "dashboard": 14
+        }
         
-        self.pokemon_companion = PokemonCompanionWidget()
-        sidebar_layout.addWidget(self.pokemon_companion)
+        target_idx = module_map.get(initial_module, 0)
         
-        # Optional: Add a label below it
-        lbl_hint = QLabel("Click for new companion")
-        lbl_hint.setAlignment(Qt.AlignCenter)
-        lbl_hint.setStyleSheet("color: #555; font-size: 9px; margin-bottom: 10px;")
-        sidebar_layout.addWidget(lbl_hint)
+        if 0 <= target_idx < len(self.sidebar_btns):
+            self.sidebar_btns[target_idx].click()
+        else:
+            self.sidebar_btns[0].click()
 
     def switch_pentest_tab(self, index):
         self.content_stack.setCurrentIndex(index)
         for i, btn in enumerate(self.sidebar_btns):
             btn.setChecked(i == index)
 
-        # REFRESH DASHBOARD ON CLICK
-        if index == 0:
+        if index == 14: # Dashboard index
             self.dashboard_tab.refresh_view()
 
     def restart_to_wizard(self):
@@ -827,36 +1031,33 @@ class CyberSecBuddyApp(QMainWindow):
         if hasattr(self, 'scan_control_tab') and self.scan_control_tab.worker and self.scan_control_tab.worker.isRunning():
             self.scan_control_tab.worker.stop()
         event.accept()
-        
+
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     
     app = QApplication(sys.argv)
-
     command_db.initialize_db()
 
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "img", "app.png")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
-
-    while True:
-        wizard = StartupWizard()
-        if wizard.exec_() != QDialog.Accepted:
-            break
-        
-        launcher = AppLauncher(
-            engagement_type=wizard.engagement_type,
-            project_db_path=wizard.project_db_path
-        )
-        launcher.show()
-
-        # 3. Start the Event Loop
-        # The app sits here while the Launcher is open.
-        # Sub-apps (CyberSecBuddyApp) are opened FROM the launcher.
-        app.exec_()
-        
-        # 4. Handle Logic After Launcher Closes
-        # If the launcher set this flag, we loop back to 'while True' and show Wizard again.
-        if not launcher.switch_project_requested:
-            break
+    # 1. Run Wizard
+    # (Uncomment the real wizard logic when pasting)
+    wizard = StartupWizard()
+    if wizard.exec_() != QDialog.Accepted:
+        sys.exit(0)
+    
+    # 2. Initialize Module Manager (The Logic Controller)
+    manager = ModuleManager(wizard.project_db_path, wizard.engagement_type)
+    
+    # 3. Launch the Hub (The UI)
+    base_asset_path = resource_path(".")
+    # Project name extraction
+    proj_name = os.path.basename(os.path.dirname(wizard.project_db_path)) if wizard.project_db_path else "New Project"
+    
+    launcher = AppLauncher(proj_name, base_asset_path)
+    
+    # 4. Connect Hub Signal to Manager Logic
+    # This is the magic link. Launcher emits string -> Manager lazy loads module.
+    launcher.launch_module_signal.connect(manager.launch_module)
+    
+    launcher.showMaximized()
+    sys.exit(app.exec_())
