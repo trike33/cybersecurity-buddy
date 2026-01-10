@@ -203,7 +203,7 @@ class ScanControlWidget(QWidget):
         # Nmap UDP
         # Defaults to Top 100 ports for speed, using the same target list
         udp_out = os.path.join(self.working_directory, "nmap_udp_out")
-        self.inp_udp_cmd.setText(f"nmap -sU --top-ports 100 -sV -iL {scope} naabu_out -oN {udp_out}")
+        self.inp_udp_cmd.setText(f"nmap -sU --top-ports 100 -sV -iL {scope} -oN {udp_out}")
 
     def load_project_info(self):
         data = project_db.load_project_data(self.project_db_path)

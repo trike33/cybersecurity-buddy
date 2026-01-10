@@ -6,53 +6,16 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QDialog,
                              QVBoxLayout, QLabel, QPushButton, QWidget, 
                              QHBoxLayout, QStackedWidget, QFrame, QAction,
                              QFileDialog, QMessageBox, QListWidget, QLineEdit,
-                             QComboBox, QDateEdit, QTextEdit, QDialogButtonBox, QMenu)
-from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate, QTimer
-from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QMovie, QCursor
+                             QComboBox, QDateEdit, QTextEdit, QDialogButtonBox)
+from PyQt5.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QPoint, QDate
+from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap
 import shutil
-import socket
-
+from utils.launcher_hub import AppLauncher
 # Import utilities
 from utils import db as command_db
 from utils import project_db
 
-def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-
-    return os.path.join(base_path, relative_path)
-
-class ComingSoonWidget(QWidget):
-    """A placeholder widget for tabs currently under development."""
-    def __init__(self, title, subtitle="Coming Soon"):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(20)
-        
-        # Icon/Emoji
-        lbl_icon = QLabel("🚧")
-        lbl_icon.setFont(QFont("Arial", 60))
-        lbl_icon.setStyleSheet("color: #555;")
-        
-        # Main Title
-        lbl_title = QLabel(title)
-        lbl_title.setFont(QFont("Arial", 28, QFont.Bold))
-        lbl_title.setStyleSheet("color: #00d2ff;")
-        
-        # Subtitle/Description
-        lbl_desc = QLabel(subtitle)
-        lbl_desc.setFont(QFont("Arial", 16))
-        lbl_desc.setStyleSheet("color: #888; font-style: italic;")
-        
-        layout.addWidget(lbl_icon, alignment=Qt.AlignCenter)
-        layout.addWidget(lbl_title, alignment=Qt.AlignCenter)
-        layout.addWidget(lbl_desc, alignment=Qt.AlignCenter)
-
+# ... (SimpleTextEditorDialog & StartupWizard classes remain unchanged) ...
 class SimpleTextEditorDialog(QDialog):
     """A simple popup to let the user type in domains or scope IPs manually."""
     def __init__(self, title, current_text="", parent=None):
@@ -87,35 +50,15 @@ class StartupWizard(QDialog):
         self.setFixedSize(1200, 900)
 
         # --- RANDOM WALLPAPER LOGIC ---
-
-        # Define a list of whitelisted hostnames
-        whitelisted_hostnames = ['kali', 'stegosaurus', 'ankylo']
-
-        # Function to get the current hostname
-        def get_current_hostname():
-            return socket.gethostname()
-
-        # Determine the wallpaper directory based on the hostname
-        base_path = resource_path(".")
-        current_hostname = get_current_hostname()
-        hostname_test = False
-
-        # Determine which directory to use
-        if current_hostname in whitelisted_hostnames:
-            wallpaper_dir = os.path.join(base_path, "themes", "img", "pokemon")
-            hostname_test = True
-        else:
-            wallpaper_dir = os.path.join(base_path, "themes", "img")
-
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        wallpaper_dir = os.path.join(base_path, "themes", "img")
         selected_wallpaper = None
-
-        # Check if the wallpaper directory exists and contains images
+        
         if os.path.exists(wallpaper_dir):
             images = [f for f in os.listdir(wallpaper_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
             if images:
                 selected_wallpaper = os.path.join(wallpaper_dir, random.choice(images))
-
-        # If no wallpaper is selected, use the default background
+        
         if not selected_wallpaper:
             default_bg = os.path.join(base_path, "themes", "img", "wizard_bg.jpeg")
             if os.path.exists(default_bg):
@@ -566,204 +509,6 @@ class StartupWizard(QDialog):
         self.engagement_type = eng_type
         self.accept()
 
-class InteractivePokemonLabel(QLabel):
-    """
-    A clickable label that displays a random Pokemon GIF.
-    Support for 'Petting' (Heart animation) and toggling Walk/Idle states.
-    """
-    def __init__(self, asset_base_path, parent=None):
-        super().__init__(parent)
-        self.asset_base_path = asset_base_path
-        self.current_movie = None
-        
-        # State tracking
-        self.current_mon_path = None
-        self.idle_gif_path = None
-        self.walk_gif_path = None
-        self.is_walking = True
-        self.pokemon_name = ""
-        
-        self.setCursor(Qt.PointingHandCursor)
-        self.setAlignment(Qt.AlignCenter)
-        self.setFixedSize(80, 80) # Size for the sprite area
-        self.setStyleSheet("background: transparent;")
-        
-        # Heart Overlay (Hidden by default)
-        self.heart_lbl = QLabel(self)
-        self.heart_lbl.setFixedSize(32, 32)
-        # Position slightly offset to look like a speech bubble
-        self.heart_lbl.move(48, 0) 
-        self.heart_lbl.hide()
-        
-        # Load heart resource
-        heart_path = os.path.join(self.asset_base_path, "heart.png")
-        if os.path.exists(heart_path):
-            self.heart_lbl.setPixmap(QPixmap(heart_path).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        
-        # Timer for hiding heart
-        self.heart_timer = QTimer(self)
-        self.heart_timer.setSingleShot(True)
-        self.heart_timer.timeout.connect(self.heart_lbl.hide)
-
-        # Context Menu
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.show_context_menu)
-
-        # Initial load
-        self.load_random_pokemon()
-
-    def mousePressEvent(self, event):
-        """Click interaction: Pet the pokemon."""
-        if event.button() == Qt.LeftButton:
-            self.pet_pokemon()
-        super().mousePressEvent(event)
-
-    def show_context_menu(self, position):
-        menu = QMenu(self)
-        action_swap = QAction("Call New Companion", self)
-        action_swap.triggered.connect(self.load_random_pokemon)
-        menu.addAction(action_swap)
-        menu.exec_(self.mapToGlobal(position))
-
-    def pet_pokemon(self):
-        """Show heart and toggle animation state."""
-        # 1. Show Heart
-        self.heart_lbl.show()
-        self.heart_lbl.raise_()
-        self.heart_timer.start(1500) # Hide after 1.5s
-        
-        # 2. Toggle Animation (if both exist)
-        if self.idle_gif_path and self.walk_gif_path:
-            self.is_walking = not self.is_walking
-            new_path = self.walk_gif_path if self.is_walking else self.idle_gif_path
-            self.play_gif(new_path)
-
-    def play_gif(self, path):
-        if not path or not os.path.exists(path): return
-        
-        if self.current_movie:
-            self.current_movie.stop()
-            self.current_movie.deleteLater()
-        
-        self.current_movie = QMovie(path)
-        self.current_movie.setScaledSize(QSize(64, 64))
-        self.setMovie(self.current_movie)
-        self.current_movie.start()
-
-    def load_random_pokemon(self):
-        """Logic to pick a random GIF from the asset structure."""
-        if not os.path.exists(self.asset_base_path):
-            self.setText("?")
-            return
-
-        try:
-            # 1. Find Generation folders
-            gens = [d for d in os.listdir(self.asset_base_path) if d.startswith('gen') and os.path.isdir(os.path.join(self.asset_base_path, d))]
-            if not gens: 
-                self.setText("No Gens")
-                return
-            
-            # 2. Random Gen -> Random Mon
-            selected_gen = random.choice(gens)
-            gen_path = os.path.join(self.asset_base_path, selected_gen)
-            
-            pokemons = [d for d in os.listdir(gen_path) if os.path.isdir(os.path.join(gen_path, d))]
-            if not pokemons: return
-            
-            selected_mon = random.choice(pokemons)
-            mon_path = os.path.join(gen_path, selected_mon)
-            
-            # 3. Identify Idle and Walk GIFs
-            gifs = [f for f in os.listdir(mon_path) if f.endswith('.gif')]
-            
-            # Reset paths
-            self.idle_gif_path = None
-            self.walk_gif_path = None
-            
-            # Try to find specific files based on naming convention "default_idle_X.gif" / "default_walk_X.gif"
-            # Or fuzzy match
-            for g in gifs:
-                if 'idle' in g: self.idle_gif_path = os.path.join(mon_path, g)
-                if 'walk' in g: self.walk_gif_path = os.path.join(mon_path, g)
-            
-            # Fallback if specific names not found
-            if not self.idle_gif_path and gifs: self.idle_gif_path = os.path.join(mon_path, gifs[0])
-            if not self.walk_gif_path and gifs: self.walk_gif_path = os.path.join(mon_path, gifs[-1])
-            
-            self.pokemon_name = f"{selected_mon.title()} ({selected_gen})"
-            self.setToolTip(f"{self.pokemon_name}\n(Left Click to Pet)\n(Right Click to Swap)")
-            
-            # Start Walking by default
-            self.is_walking = True
-            initial_path = self.walk_gif_path if self.walk_gif_path else self.idle_gif_path
-            self.play_gif(initial_path)
-            
-        except Exception as e:
-            print(f"Error loading Pokemon sprite: {e}")
-            self.setText("Error")
-
-class PokemonCompanionWidget(QWidget):
-    """
-    Manages a team of InteractivePokemonLabels.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(140) # Compact height
-        
-        self.asset_base_path = resource_path(os.path.join("themes", "pokemon_assets"))
-        
-        # Main Layout
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 5, 0, 5)
-        self.layout.setSpacing(2)
-        
-        # 1. Container for the Sprites (Row of 2)
-        self.sprites_container = QWidget()
-        self.sprites_layout = QHBoxLayout(self.sprites_container)
-        self.sprites_layout.setContentsMargins(0,0,0,0)
-        self.sprites_layout.setSpacing(0)
-        self.sprites_layout.setAlignment(Qt.AlignCenter)
-        
-        self.labels = []
-        # Create 2 companions
-        for _ in range(2):
-            lbl = InteractivePokemonLabel(self.asset_base_path)
-            self.labels.append(lbl)
-            self.sprites_layout.addWidget(lbl)
-            
-        self.layout.addWidget(self.sprites_container)
-        
-        # 2. Reload Button (Thin, unobtrusive)
-        self.btn_reload = QPushButton("↻ Reload Team")
-        self.btn_reload.setCursor(Qt.PointingHandCursor)
-        self.btn_reload.setFixedHeight(20)
-        self.btn_reload.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                border: 1px solid #444;
-                border-radius: 10px;
-                color: #666;
-                font-size: 10px;
-                margin: 0 40px; 
-            }
-            QPushButton:hover {
-                border-color: #666;
-                color: #888;
-                background-color: rgba(255,255,255,0.05);
-            }
-        """)
-        self.btn_reload.clicked.connect(self.reload_all)
-        self.layout.addWidget(self.btn_reload)
-        
-        # Check assets once
-        if not os.path.exists(self.asset_base_path):
-            self.btn_reload.setText("Assets Missing")
-            self.btn_reload.setEnabled(False)
-
-    def reload_all(self):
-        for lbl in self.labels:
-            lbl.load_random_pokemon()
-
 # ---------------------------------------------------------
 # 2. MAIN APPLICATION 
 # ---------------------------------------------------------
@@ -1082,7 +827,7 @@ class CyberSecBuddyApp(QMainWindow):
         if hasattr(self, 'scan_control_tab') and self.scan_control_tab.worker and self.scan_control_tab.worker.isRunning():
             self.scan_control_tab.worker.stop()
         event.accept()
-
+        
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
@@ -1091,7 +836,7 @@ if __name__ == "__main__":
 
     command_db.initialize_db()
 
-    icon_path = resource_path(os.path.join("resources", "img", "app.png"))
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "img", "app.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
@@ -1100,13 +845,18 @@ if __name__ == "__main__":
         if wizard.exec_() != QDialog.Accepted:
             break
         
-        main_win = CyberSecBuddyApp(
+        launcher = AppLauncher(
             engagement_type=wizard.engagement_type,
             project_db_path=wizard.project_db_path
         )
-        main_win.showMaximized() 
-        
+        launcher.show()
+
+        # 3. Start the Event Loop
+        # The app sits here while the Launcher is open.
+        # Sub-apps (CyberSecBuddyApp) are opened FROM the launcher.
         app.exec_()
         
-        if not main_win.restart_requested:
+        # 4. Handle Logic After Launcher Closes
+        # If the launcher set this flag, we loop back to 'while True' and show Wizard again.
+        if not launcher.switch_project_requested:
             break

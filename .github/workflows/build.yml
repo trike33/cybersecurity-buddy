@@ -15,13 +15,13 @@ on:
 jobs:
   # --- JOB 1: LINUX BUILD ---
   build-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
       
-      - name: Set up Python 3.9
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
-        with: { python-version: "3.9" }
+        with: { python-version: "3.11" }
 
       - name: Install Dependencies
         run: |
@@ -67,9 +67,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Set up Python 3.9
+      - name: Set up Python 3.11
         uses: actions/setup-python@v4
-        with: { python-version: "3.9" }
+        with: { python-version: "3.11" }
 
       - name: Install Dependencies
         run: |
