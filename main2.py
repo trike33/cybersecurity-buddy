@@ -1073,6 +1073,10 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     command_db.initialize_db()
 
+    icon_path = resource_path(os.path.join("resources", "img", "app.png"))
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
     # 1. Run Wizard
     # (Uncomment the real wizard logic when pasting)
     wizard = StartupWizard()
