@@ -48,5 +48,10 @@ Nmap (no brute),"nmap --script ""snmp* and not snmp-brute"" {IP}",0,1,snmp
 banner grab,nmap -p 389 --script ldap-search -Pn {IP},0,1,ldap
 base ldapsearch,ldapsearch -H ldap://{IP} -x,0,0,ldap
 ldap naming context dump,ldapsearch -H ldap://{IP} -x -s base namingcontexts,0,0,ldap
+nmap scan,"nmap --script ms-sql-info,ms-sql-empty-password,ms-sql-xp-cmdshell,ms-sql-config,ms-sql-ntlm-info,ms-sql-tables,ms-sql-hasdbaccess,ms-sql-dac,ms-sql-dump-hashes --script-args mssql.instance-port=1433,mssql.username=sa,mssql.password=,mssql.instance-name=MSSQLSERVER -sV -p 1433 {IP}",0,1,mssql
 nmap scan,"nmap --script=nfs-ls.nse,nfs-showmount.nse,nfs-statfs.nse -p 2049 {IP}",0,1,nfs
 nmap scan,"nmap --script=mysql-databases.nse,mysql-empty-password.nse,mysql-enum.nse,mysql-info.nse,mysql-variables.nse,mysql-vuln-cve2012-2122.nse {IP} -p 3306",0,1,mysql
+nmap scan,"nmap --script ""rdp-enum-encryption or rdp-vuln-ms12-020 or rdp-ntlm-info"" -p 3389 -T4 {IP}",0,1,rdp
+tech-detect,whatweb -i naabu_out --log-brief whatweb_out,0,0,http
+crawl,katana -list naabu_out -o katana_out,0,0,http
+check crawl results,httpx -l crawl_scope -sc -cl -fr -o crawl_results -mc 200,0,0,http
