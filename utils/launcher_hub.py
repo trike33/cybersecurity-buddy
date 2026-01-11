@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QFrame, QGridLayout, QScrollArea, 
                              QGraphicsDropShadowEffect)
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt5.QtGui import QFont, QCursor, QColor, QMovie, QPixmap
+from PyQt5.QtGui import QFont, QCursor, QColor, QMovie, QPixmap, QBrush, QPalette
 
 # ---------------------------------------------------------
 # 1. INTERACTIVE POKEMON LABEL
@@ -24,7 +24,6 @@ class InteractivePokemonLabel(QLabel):
         self.heart_lbl.move(60, 10) 
         self.heart_lbl.hide()
         
-        # Robust Heart Loading
         self.heart_pixmap = None
         potential_heart_paths = [
             os.path.join(self.asset_base_path, "themes", "pokemon_assets", "heart.png"),
@@ -109,8 +108,8 @@ class ToolCard(QFrame):
     def __init__(self, title, description, module_id, theme_color, bg_color, parent=None):
         super().__init__(parent)
         self.module_id = module_id
-        # Slightly reduced height to fit 5 in a column nicely
-        self.setFixedSize(280, 160) 
+        # Adjusted width to fit 5 columns comfortably in 1280px
+        self.setFixedSize(240, 160) 
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.setObjectName("ToolCard")
         
@@ -133,16 +132,17 @@ class ToolCard(QFrame):
         self.setGraphicsEffect(shadow)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(15, 15, 15, 15)
 
         lbl_title = QLabel(title)
-        lbl_title.setFont(QFont("Arial", 16, QFont.Bold))
+        lbl_title.setFont(QFont("Arial", 14, QFont.Bold))
         lbl_title.setStyleSheet("color: #ffffff; background: transparent;")
+        lbl_title.setWordWrap(True)
         
         lbl_desc = QLabel(description)
         lbl_desc.setWordWrap(True)
         lbl_desc.setFont(QFont("Arial", 9))
-        lbl_desc.setStyleSheet("color: #d0d0e0; background: transparent;")
+        lbl_desc.setStyleSheet("color: #b0b0c0; background: transparent;")
         lbl_desc.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         
         lbl_launch = QLabel("OPEN ➔")
@@ -186,15 +186,19 @@ class AppLauncher(QMainWindow):
         scroll.setStyleSheet("""
             QScrollArea { border: none; background: #20202a; } 
             QWidget { background: #20202a; }
+            QScrollBar:horizontal { height: 10px; background: #2f2f40; }
+            QScrollBar::handle:horizontal { background: #555; border-radius: 5px; }
             QScrollBar:vertical { width: 10px; background: #2f2f40; }
             QScrollBar::handle:vertical { background: #555; border-radius: 5px; }
         """)
         
         self.content_widget = QWidget()
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(50, 40, 50, 60)
+        self.content_layout = QHBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(30, 40, 30, 60)
+        self.content_layout.setSpacing(20)
+        self.content_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         
-        self.setup_apps_masonry()
+        self.setup_apps_columns()
         
         scroll.setWidget(self.content_widget)
         self.main_layout.addWidget(scroll)
@@ -235,10 +239,9 @@ class AppLauncher(QMainWindow):
         layout.addWidget(companion_frame)
         self.main_layout.addWidget(header)
 
-    def setup_apps_masonry(self):
+    def setup_apps_columns(self):
         """
-        Organize apps into 3 optimized columns to avoid empty space.
-        Balance: 5 items per column.
+        Organize apps into 5 distinct vertical columns.
         """
         categories = {
             "RECONNAISSANCE": [
@@ -262,7 +265,7 @@ class AppLauncher(QMainWindow):
                 ("Post Exploitation", "Persistence, Looting, & Scripts.", "postexp", "#d35400", "#331a00"),
             ],
             "REPORTING": [
-                 ("Reporting", "Generate HTML/PDF finding reports.", "report", "#e67e22", "#331c07"),
+                 ("Reportin", "Generate HTML/PDF finding reports.", "report", "#e67e22", "#331c07"),
             ],
             "OTHERS": [
                 ("Dashboard", "Project overview & Stats.", "dashboard", "#ffffff", "#333333"),
@@ -270,45 +273,33 @@ class AppLauncher(QMainWindow):
             ]
         }
 
-        # 3-Column Layout
-        cols_layout = QHBoxLayout()
-        cols_layout.setSpacing(40)
-        cols_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-
-        # Define which categories go into which column to balance the height
-        # Column 1: Recon (1) + Enum (4) = 5 Items
-        # Column 2: Exploiting (5) = 5 Items
-        # Column 3: Privesc (2) + Reporting (1) + Others (2) = 5 Items
-        columns_map = [
-            ["RECONNAISSANCE", "ENUMERATION"],
-            ["EXPLOITING"],
-            ["PRIVESC & POST-EXPLOTAION", "REPORTING", "OTHERS"]
-        ]
-
-        for col_cats in columns_map:
-            col_widget = QWidget()
-            col_layout = QVBoxLayout(col_widget)
+        # Create 5 Vertical Layouts
+        for cat_name, apps in categories.items():
+            col_container = QWidget()
+            col_container.setFixedWidth(250) # Enforce column width
+            col_layout = QVBoxLayout(col_container)
             col_layout.setContentsMargins(0, 0, 0, 0)
             col_layout.setSpacing(15)
             col_layout.setAlignment(Qt.AlignTop)
-            
-            for cat_key in col_cats:
-                # Section Header
-                lbl_header = QLabel(cat_key)
-                lbl_header.setFont(QFont("Arial", 12, QFont.Bold))
-                lbl_header.setStyleSheet("color: #666688; margin-top: 10px; margin-bottom: 5px; letter-spacing: 1px;")
-                col_layout.addWidget(lbl_header)
 
-                # Cards in this category
-                for title, desc, mid, accent, bg in categories[cat_key]:
-                    card = ToolCard(title, desc, mid, accent, bg)
-                    card.clicked.connect(self.on_card_clicked)
-                    col_layout.addWidget(card)
+            # 1. Header
+            lbl_header = QLabel(cat_name)
+            lbl_header.setFont(QFont("Arial", 11, QFont.Bold))
+            lbl_header.setStyleSheet("color: #8888aa; text-transform: uppercase; margin-bottom: 5px; border-bottom: 2px solid #333; padding-bottom: 5px;")
+            lbl_header.setWordWrap(True) # Wrap long headers
+            col_layout.addWidget(lbl_header)
+
+            # 2. App Cards
+            for title, desc, mid, accent, bg in apps:
+                card = ToolCard(title, desc, mid, accent, bg)
+                card.clicked.connect(self.on_card_clicked)
+                col_layout.addWidget(card)
             
+            # 3. Stretch to push items up
             col_layout.addStretch()
-            cols_layout.addWidget(col_widget)
-
-        self.content_layout.addLayout(cols_layout)
+            
+            # Add column to main horizontal layout
+            self.content_layout.addWidget(col_container)
 
     def setup_footer(self):
         footer = QFrame()
