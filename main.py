@@ -157,7 +157,7 @@ class ModuleManager:
             elif module_id == "dashboard":
                 from modules.dashboard import DashboardWidget
                 # Check for hostname logic if needed
-                whitelisted = ["stegosaurus", "ankylo", "kali"]
+                whitelisted = ["stegosaurus", "ankylo"]
                 is_home = socket.gethostname() in whitelisted
                 widget = DashboardWidget(self.project_db_path, hostname_test=is_home)
                 title = "Dashboard"
@@ -294,7 +294,7 @@ class StartupWizard(QDialog):
         wallpaper_dir = os.path.join(base_path, "themes", "img")
         
         # Check for whitelisted hostname for Pokemon wallpapers
-        whitelisted_hostnames = ['kali', 'stegosaurus', 'ankylo']
+        whitelisted_hostnames = [, 'stegosaurus', 'ankylo']
         if socket.gethostname() in whitelisted_hostnames:
              # Try specific pokemon folder if it exists
              poke_path = os.path.join(wallpaper_dir, "pokemon")
