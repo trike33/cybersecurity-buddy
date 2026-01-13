@@ -565,7 +565,7 @@ class PlaygroundTabWidget(QWidget):
         self.bg_pixmap = None
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         bg_path = os.path.join(base_path, "themes", "img", "pokemon", "playground_bg.png")
-        if os.path.exists(bg_path):
+        if os.path.exists(bg_path) and hostname_test == True:
             self.bg_pixmap = QPixmap(bg_path)
 
         # --- Layout ---
