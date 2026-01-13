@@ -3,6 +3,7 @@ import re
 import html
 import sys
 import shutil
+import difflib
 from urllib.parse import urlparse
 from collections import Counter
 import webbrowser
@@ -13,12 +14,14 @@ from PyQt5.QtWidgets import (
     QTableView, QHeaderView, QMessageBox, QPushButton, QHBoxLayout,
     QTextEdit, QDialogButtonBox, QTabWidget, QListWidget, QLabel, QMenu,
     QStyleOption, QStyle, QLineEdit, QCheckBox, QApplication, QFrame,
-    QFileSystemModel, QAction, QToolButton, QAbstractItemView
+    QFileSystemModel, QAction, QToolButton, QAbstractItemView, QGroupBox,
+    QMainWindow, QSplitter, QInputDialog, QFileDialog, QShortcut
 )
-from PyQt5.QtCore import Qt, QSize, QDir
+from PyQt5.QtCore import Qt, QSize, QDir, QRegExp
 from PyQt5.QtGui import (
     QIcon, QStandardItemModel, QStandardItem, QColor, QBrush, 
-    QPainter, QPixmap, QFont, QKeySequence, QDesktopServices
+    QPainter, QPixmap, QFont, QKeySequence, QDesktopServices, QTextDocument,
+    QTextCursor
 )
 
 # --- Matplotlib Integration ---
@@ -30,527 +33,540 @@ from utils import db as command_db
 from .dialogs import FuzzerDialog
 
 # ==========================================
-#       Viewers (Log, Stats, Table, NMAP)
+#       Viewers (Diff, Log, NMAP, Stats)
 # ==========================================
 
-class TerminalLogViewer(QDialog):
-    """Robust viewer for raw terminal output files with ANSI color support."""
-    def __init__(self, file_path, parent=None):
+class DiffViewer(QDialog):
+    """
+    GitHub-style Side-by-Side File Comparer.
+    """
+    def __init__(self, name_a, content_a, name_b, content_b, parent=None):
         super().__init__(parent)
-        self.file_path = file_path
-        self.setWindowTitle(f"Log Viewer - {os.path.basename(file_path)}")
-        self.resize(1000, 700)
+        self.setWindowTitle(f"Diff: {name_a} ↔ {name_b}")
+        self.resize(1400, 900)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
+        
+        main_layout = QVBoxLayout(self)
+        splitter = QSplitter(Qt.Horizontal)
+        
+        # Left Pane
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        lbl_a = QLabel(f"🔴 {name_a}")
+        lbl_a.setStyleSheet("font-weight: bold; color: #bf616a; font-size: 14px; padding: 5px;")
+        self.text_left = QTextEdit()
+        self.text_left.setReadOnly(True)
+        self.configure_editor(self.text_left)
+        left_layout.addWidget(lbl_a)
+        left_layout.addWidget(self.text_left)
+        
+        # Right Pane
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        lbl_b = QLabel(f"🟢 {name_b}")
+        lbl_b.setStyleSheet("font-weight: bold; color: #a3be8c; font-size: 14px; padding: 5px;")
+        self.text_right = QTextEdit()
+        self.text_right.setReadOnly(True)
+        self.configure_editor(self.text_right)
+        right_layout.addWidget(lbl_b)
+        right_layout.addWidget(self.text_right)
+        
+        splitter.addWidget(left_widget)
+        splitter.addWidget(right_widget)
+        splitter.setSizes([700, 700])
+        main_layout.addWidget(splitter)
+        
+        # Sync Scroll
+        sb_left = self.text_left.verticalScrollBar()
+        sb_right = self.text_right.verticalScrollBar()
+        sb_left.valueChanged.connect(sb_right.setValue)
+        sb_right.valueChanged.connect(sb_left.setValue)
+        
+        # Zoom Shortcuts
+        QShortcut(QKeySequence.ZoomIn, self, activated=self.zoom_in)
+        QShortcut(QKeySequence("Ctrl+="), self, activated=self.zoom_in)
+        QShortcut(QKeySequence.ZoomOut, self, activated=self.zoom_out)
+
+        self.compute_diff(content_a.splitlines(), content_b.splitlines())
+
+    def configure_editor(self, editor):
+        font = QFont("Consolas", 10)
+        font.setStyleHint(QFont.Monospace)
+        editor.setFont(font)
+        editor.setStyleSheet("QTextEdit { background-color: #1b2b42; color: #d8dee9; border: 1px solid #4c566a; }")
+        editor.setLineWrapMode(QTextEdit.NoWrap)
+
+    def compute_diff(self, lines_a, lines_b):
+        matcher = difflib.SequenceMatcher(None, lines_a, lines_b)
+        html_left = []
+        html_right = []
+        esc = html.escape
+        
+        for op, i1, i2, j1, j2 in matcher.get_opcodes():
+            if op == 'replace':
+                for line in lines_a[i1:i2]: html_left.append(f"<div style='background-color: #4c252b;'>{esc(line)}</div>")
+                for line in lines_b[j1:j2]: html_right.append(f"<div style='background-color: #254c30;'>{esc(line)}</div>")
+            elif op == 'delete':
+                for line in lines_a[i1:i2]: html_left.append(f"<div style='background-color: #4c252b;'>{esc(line)}</div>")
+                for _ in range(i2-i1): html_right.append("<div>&nbsp;</div>")
+            elif op == 'insert':
+                for _ in range(j2-j1): html_left.append("<div>&nbsp;</div>")
+                for line in lines_b[j1:j2]: html_right.append(f"<div style='background-color: #254c30;'>{esc(line)}</div>")
+            elif op == 'equal':
+                for line in lines_a[i1:i2]: html_left.append(f"<div>{esc(line)}</div>")
+                for line in lines_b[j1:j2]: html_right.append(f"<div>{esc(line)}</div>")
+
+        css = "font-family: Consolas, monospace; white-space: pre;"
+        self.text_left.setHtml(f"<div style='{css}'>{''.join(html_left)}</div>")
+        self.text_right.setHtml(f"<div style='{css}'>{''.join(html_right)}</div>")
+
+    def zoom_in(self):
+        self.text_left.zoomIn(1); self.text_right.zoomIn(1)
+    def zoom_out(self):
+        self.text_left.zoomOut(1); self.text_right.zoomOut(1)
+
+
+class TerminalLogViewer(QDialog):
+    """
+    Enhanced Multi-Tab Viewer.
+    """
+    def __init__(self, file_paths, parent=None, working_directory=None):
+        super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
+        
+        if isinstance(file_paths, str): self.file_paths = [file_paths]
+        else: self.file_paths = file_paths
+            
+        self.setWindowTitle(f"Log Viewer - {len(self.file_paths)} file(s)")
+        self.resize(1200, 800)
         
         layout = QVBoxLayout(self)
-        
-        # Toolbar
-        toolbar_layout = QHBoxLayout()
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Find...")
-        self.search_input.returnPressed.connect(self.find_next)
-        self.search_input.setMaximumWidth(300)
-        
-        self.btn_prev = QPushButton("↑")
-        self.btn_prev.setFixedWidth(30)
-        self.btn_prev.clicked.connect(self.find_prev)
 
-        self.btn_next = QPushButton("↓")
-        self.btn_next.setFixedWidth(30)
-        self.btn_next.clicked.connect(self.find_next)
+        # 1. Initialize Tabs EARLY (Fix for AttributeError)
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.tabCloseRequested.connect(self.close_tab)
+
+        # 2. Toolbar
+        toolbar = QHBoxLayout()
         
-        self.check_wrap = QCheckBox("Word Wrap")
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Find text or regex...")
+        self.search_input.returnPressed.connect(self.find_next)
+        self.search_input.textChanged.connect(self.reset_search_stats)
+        self.search_input.setMinimumWidth(300)
+        
+        btn_prev = QPushButton("↑")
+        btn_prev.setFixedWidth(30)
+        btn_prev.clicked.connect(self.find_prev)
+
+        btn_next = QPushButton("↓")
+        btn_next.setFixedWidth(30)
+        btn_next.clicked.connect(self.find_next)
+        
+        self.check_case = QCheckBox("Aa")
+        self.check_regex = QCheckBox(".*")
+        self.lbl_match_count = QLabel("")
+        self.lbl_match_count.setStyleSheet("color: #888;")
+
+        self.btn_add_file = QPushButton("+ Open File")
+        self.btn_add_file.clicked.connect(self.add_files_dialog)
+
+        self.btn_compare = QPushButton("Compare Tabs")
+        self.btn_compare.clicked.connect(self.open_compare_dialog)
+        
+        # This call is now safe because self.tab_widget exists
+        self.update_buttons_state()
+
+        self.check_wrap = QCheckBox("Wrap")
         self.check_wrap.setChecked(True)
         self.check_wrap.toggled.connect(self.toggle_wrap)
         
-        self.zoom_out_btn = QPushButton("-")
-        self.zoom_out_btn.setFixedWidth(30)
-        self.zoom_out_btn.clicked.connect(self.zoom_out)
+        zoom_out = QPushButton("-")
+        zoom_out.setFixedWidth(30)
+        zoom_out.clicked.connect(self.zoom_out)
 
-        self.zoom_in_btn = QPushButton("+")
-        self.zoom_in_btn.setFixedWidth(30)
-        self.zoom_in_btn.clicked.connect(self.zoom_in)
+        zoom_in = QPushButton("+")
+        zoom_in.setFixedWidth(30)
+        zoom_in.clicked.connect(self.zoom_in)
 
-        toolbar_layout.addWidget(QLabel("Search:"))
-        toolbar_layout.addWidget(self.search_input)
-        toolbar_layout.addWidget(self.btn_prev)
-        toolbar_layout.addWidget(self.btn_next)
-        toolbar_layout.addStretch()
-        toolbar_layout.addWidget(self.check_wrap)
-        toolbar_layout.addWidget(QLabel("Zoom:"))
-        toolbar_layout.addWidget(self.zoom_out_btn)
-        toolbar_layout.addWidget(self.zoom_in_btn)
+        toolbar.addWidget(QLabel("🔍"))
+        toolbar.addWidget(self.search_input)
+        toolbar.addWidget(btn_prev)
+        toolbar.addWidget(btn_next)
+        toolbar.addWidget(self.check_case)
+        toolbar.addWidget(self.check_regex)
+        toolbar.addWidget(self.lbl_match_count)
+        toolbar.addStretch()
+        toolbar.addWidget(self.btn_add_file)
+        toolbar.addWidget(self.btn_compare)
+        toolbar.addWidget(self.check_wrap)
+        toolbar.addWidget(QLabel("Zoom:"))
+        toolbar.addWidget(zoom_out)
+        toolbar.addWidget(zoom_in)
         
-        layout.addLayout(toolbar_layout)
+        layout.addLayout(toolbar)
+        layout.addWidget(self.tab_widget)
+        self.working_directory = working_directory
         
-        self.text_edit = QTextEdit()
-        self.text_edit.setReadOnly(True)
-        font = QFont("Consolas", 10)
-        font.setStyleHint(QFont.Monospace)
-        self.text_edit.setFont(font)
-        
-        # Dark theme
-        self.text_edit.setStyleSheet("""
-            QTextEdit {
-                background-color: #1b2b42; 
-                color: #d8dee9; 
-                border: 2px solid #2e3440;
-                selection-background-color: #4c566a;
-            }
-        """)
-        
-        layout.addWidget(self.text_edit)
-        
+        # 3. Load Files
+        for fp in self.file_paths:
+            self.add_file_tab(fp)
+            
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
         button_box.rejected.connect(self.accept)
         layout.addWidget(button_box)
 
-        self.load_file_content()
+        # Shortcuts
+        QShortcut(QKeySequence.ZoomIn, self, activated=self.zoom_in)
+        QShortcut(QKeySequence("Ctrl+="), self, activated=self.zoom_in)
+        QShortcut(QKeySequence.ZoomOut, self, activated=self.zoom_out)
 
-    def load_file_content(self):
+    def add_files_dialog(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Open Files to View")
+        start_dir = self.working_directory if self.working_directory else ""
+        files, _ = QFileDialog.getOpenFileNames(self, "Open Files to View", start_dir)
+        
+        if files:
+            for f in files:
+                self.add_file_tab(f)
+
+    def update_buttons_state(self):
+        self.btn_compare.setEnabled(self.tab_widget.count() >= 2)
+
+    def add_file_tab(self, file_path):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0,0,0,0)
+        
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        font = QFont("Consolas", 10)
+        font.setStyleHint(QFont.Monospace)
+        text_edit.setFont(font)
+        text_edit.setStyleSheet("QTextEdit { background-color: #1b2b42; color: #d8dee9; border: none; selection-background-color: #4c566a; }")
+        
+        text_edit.setLineWrapMode(QTextEdit.WidgetWidth if self.check_wrap.isChecked() else QTextEdit.NoWrap)
+        layout.addWidget(text_edit)
+        
         try:
-            with open(self.file_path, 'r', encoding='utf-8', errors='replace') as f:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
+                tab.raw_content = content 
                 html_content = self.ansi_to_html(content)
-                self.text_edit.setHtml(f"<pre style='font-family: Consolas, monospace;'>{html_content}</pre>")
+                text_edit.setHtml(f"<pre style='font-family: Consolas, monospace;'>{html_content}</pre>")
         except Exception as e:
-            self.text_edit.setPlainText(f"Error reading file:\n{e}")
+            text_edit.setPlainText(f"Error: {e}")
+            tab.raw_content = ""
+            
+        self.tab_widget.addTab(tab, os.path.basename(file_path))
+        self.update_buttons_state()
+
+    def close_tab(self, index):
+        self.tab_widget.removeTab(index)
+        self.update_buttons_state()
+        if self.tab_widget.count() == 0: self.accept()
+
+    def current_editor(self):
+        w = self.tab_widget.currentWidget()
+        return w.findChild(QTextEdit) if w else None
+
+    # Search
+    def find_next(self):
+        editor = self.current_editor()
+        if not editor: return
+        text = self.search_input.text()
+        if not text: return
+        flags = QTextDocument.FindFlags()
+        if self.check_case.isChecked(): flags |= QTextDocument.FindCaseSensitively
+        if self.check_regex.isChecked():
+            reg = QRegExp(text)
+            if not self.check_case.isChecked(): reg.setCaseSensitivity(Qt.CaseInsensitive)
+            found = editor.find(reg)
+        else: found = editor.find(text, flags)
+        if not found:
+            editor.moveCursor(QTextCursor.Start) 
+            if self.check_regex.isChecked(): found = editor.find(QRegExp(text))
+            else: found = editor.find(text, flags)
+            self.lbl_match_count.setText("Wrapped top" if found else "No matches")
+        else: self.lbl_match_count.setText("Found")
+
+    def find_prev(self):
+        editor = self.current_editor()
+        if not editor: return
+        text = self.search_input.text()
+        if not text: return
+        if self.check_regex.isChecked():
+             self.lbl_match_count.setText("Regex prev not supported")
+             return
+        flags = QTextDocument.FindFlags()
+        if self.check_case.isChecked(): flags |= QTextDocument.FindCaseSensitively
+        flags |= QTextDocument.FindBackward
+        found = editor.find(text, flags)
+        if not found:
+            editor.moveCursor(QTextCursor.End)
+            found = editor.find(text, flags)
+            self.lbl_match_count.setText("Wrapped bottom" if found else "No matches")
+        else: self.lbl_match_count.setText("Found")
+
+    def reset_search_stats(self): self.lbl_match_count.setText("")
+    def toggle_wrap(self, checked):
+        for i in range(self.tab_widget.count()):
+            e = self.tab_widget.widget(i).findChild(QTextEdit)
+            if e: e.setLineWrapMode(QTextEdit.WidgetWidth if checked else QTextEdit.NoWrap)
+            
+    def zoom_in(self):
+        e = self.current_editor()
+        if e: e.zoomIn(1)
+    def zoom_out(self):
+        e = self.current_editor()
+        if e: e.zoomOut(1)
 
     def ansi_to_html(self, text):
         text = html.escape(text)
         ansi_colors = {
             '30': '#3b4252', '31': '#bf616a', '32': '#a3be8c', '33': '#ebcb8b',
             '34': '#81a1c1', '35': '#b48ead', '36': '#88c0d0', '37': '#e5e9f0',
-            '90': '#4c566a', '91': '#d08770', '92': '#a3be8c', '93': '#ebcb8b',
-            '94': '#5e81ac', '95': '#b48ead', '96': '#8fbcbb', '97': '#eceff4',
             '0': None,
         }
         pattern = re.compile(r'\x1b\[([\d;]+)m')
         parts = pattern.split(text)
-        result = []
-        current_span_open = False
-        result.append(parts[0])
-
+        result = [parts[0]]
+        current_span = False
         for i in range(1, len(parts), 2):
             codes = parts[i].split(';')
-            text_chunk = parts[i+1]
-            color_code = None
+            color = None
             for c in codes:
-                if c in ansi_colors:
-                    if c == '0': color_code = 'RESET'
-                    else: color_code = ansi_colors[c]
-
-            if color_code == 'RESET':
-                if current_span_open:
-                    result.append("</span>")
-                    current_span_open = False
-            elif color_code:
-                if current_span_open: result.append("</span>")
-                result.append(f"<span style='color:{color_code};'>")
-                current_span_open = True
-            result.append(text_chunk)
-            
-        if current_span_open: result.append("</span>")
+                if c in ansi_colors: color = ansi_colors[c] if c != '0' else 'RESET'
+            if color == 'RESET':
+                if current_span: result.append("</span>"); current_span = False
+            elif color:
+                if current_span: result.append("</span>")
+                result.append(f"<span style='color:{color};'>")
+                current_span = True
+            result.append(parts[i+1])
+        if current_span: result.append("</span>")
         return "".join(result)
 
-    def toggle_wrap(self, checked):
-        self.text_edit.setLineWrapMode(QTextEdit.WidgetWidth if checked else QTextEdit.NoWrap)
+    def open_compare_dialog(self):
+        cnt = self.tab_widget.count()
+        if cnt < 2: return
+        idx_a, idx_b = 0, 1
+        if cnt > 2:
+            items = [self.tab_widget.tabText(i) for i in range(cnt)]
+            item, ok = QInputDialog.getItem(self, "Select File 2", 
+                                            f"Compare '{self.tab_widget.tabText(self.tab_widget.currentIndex())}' with:", 
+                                            items, 0, False)
+            if ok and item:
+                idx_a = self.tab_widget.currentIndex()
+                for i in range(cnt):
+                    if self.tab_widget.tabText(i) == item: idx_b = i; break
+        
+        name_a = self.tab_widget.tabText(idx_a)
+        content_a = getattr(self.tab_widget.widget(idx_a), 'raw_content', "")
+        name_b = self.tab_widget.tabText(idx_b)
+        content_b = getattr(self.tab_widget.widget(idx_b), 'raw_content', "")
+        
+        viewer = DiffViewer(name_a, content_a, name_b, content_b, self)
+        viewer.show()
 
-    def find_next(self):
-        self.text_edit.find(self.search_input.text())
 
-    def find_prev(self):
-        self.text_edit.find(self.search_input.text(), QTextEdit.FindBackward)
-
-    def zoom_in(self): self.text_edit.zoomIn(1)
-    def zoom_out(self): self.text_edit.zoomOut(1)
-
-# --- NMAP Viewer (New) ---
+# --- NMAP Viewer ---
 
 class NmapViewer(QDialog):
-    """
-    Parses Nmap -oN output and displays results in tabs (one per host).
-    Parses into columns: PORT, STATE, SERVICE, VERSION.
-    """
     def __init__(self, file_path, parent=None):
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
         self.file_path = file_path
         self.setWindowTitle(f"Nmap Report - {os.path.basename(file_path)}")
-        self.resize(900, 600)
+        self.resize(1100, 700)
         
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
-        
         self.load_and_parse()
-        
-        # Close Button
-        button_box = QDialogButtonBox(QDialogButtonBox.Close)
-        button_box.rejected.connect(self.accept)
-        layout.addWidget(button_box)
+        layout.addWidget(QDialogButtonBox(QDialogButtonBox.Close, accepted=self.accept, rejected=self.accept))
 
     def load_and_parse(self):
         try:
-            with open(self.file_path, 'r', encoding='utf-8', errors='replace') as f:
-                content = f.read()
-            
-            # Split content by Nmap reports
-            # Regex looks for "Nmap scan report for <host>"
-            # We iterate line by line to maintain state
+            with open(self.file_path, 'r', encoding='utf-8', errors='replace') as f: content = f.read()
             lines = content.splitlines()
-            current_host = None
-            current_ports = []
-            capture_ports = False
-            
-            reports = {} # { "Host Name": [ (port, state, service, version), ... ] }
-
-            # Regex for port line: 80/tcp open  http    SimpleHTTPServer 0.6
-            port_regex = re.compile(r"^(\d+/(?:tcp|udp))\s+(\w+)\s+([^\s]+)\s*(.*)$")
+            current_host, current_ports, capture = None, [], False
+            reports = {}
+            regex = re.compile(r"^(\d+/(?:tcp|udp))\s+(\w+)\s+([^\s]+)\s*(.*)$")
 
             for line in lines:
                 line = line.rstrip()
-                
-                # Detect Host
                 if line.startswith("Nmap scan report for"):
-                    # Save previous if exists
-                    if current_host and current_ports:
-                        reports[current_host] = current_ports
-                    
-                    # Start new
+                    if current_host and current_ports: reports[current_host] = current_ports
                     current_host = line.replace("Nmap scan report for", "").strip()
                     current_ports = []
-                    capture_ports = False
+                    capture = False
                     continue
-                
-                # Detect Start of Table
-                if "PORT" in line and "STATE" in line and "SERVICE" in line:
-                    capture_ports = True
-                    continue
-                
-                # Stop capturing if we hit a blank line or headers (end of table usually)
-                if not line and capture_ports:
-                    capture_ports = False
-                    continue
-                
-                if capture_ports:
-                    match = port_regex.match(line)
-                    if match:
-                        port, state, service, version = match.groups()
-                        current_ports.append((port, state, service, version))
-
-            # Save last block
-            if current_host and current_ports:
-                reports[current_host] = current_ports
+                if "PORT" in line and "STATE" in line: capture = True; continue
+                if not line and capture: capture = False; continue
+                if capture:
+                    m = regex.match(line)
+                    if m: current_ports.append(m.groups())
+            if current_host and current_ports: reports[current_host] = current_ports
             
             if not reports:
-                layout = QVBoxLayout()
-                lbl = QLabel("No structured Nmap data found.\n(This viewer supports standard -oN output)")
-                lbl.setAlignment(Qt.AlignCenter)
-                self.layout().addWidget(lbl)
+                self.layout().addWidget(QLabel("No structured Nmap data found."))
                 return
 
-            # Build UI
-            for host, rows in reports.items():
-                self.add_host_tab(host, rows)
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to parse Nmap file:\n{e}")
+            for host, rows in reports.items(): self.add_host_tab(host, rows)
+        except Exception as e: QMessageBox.critical(self, "Error", str(e))
 
     def add_host_tab(self, host, rows):
         tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        table = QTableView()
-        model = QStandardItemModel()
-        model.setHorizontalHeaderLabels(["PORT", "STATE", "SERVICE", "VERSION"])
-        
+        l = QVBoxLayout(tab)
+        tv = QTableView()
+        m = QStandardItemModel()
+        m.setHorizontalHeaderLabels(["PORT", "STATE", "SERVICE", "VERSION"])
         for p, st, sv, v in rows:
-            # Colorize State
-            state_item = QStandardItem(st)
-            if "open" in st:
-                state_item.setForeground(QColor("#a3be8c")) # Green
-            elif "filtered" in st:
-                state_item.setForeground(QColor("#ebcb8b")) # Yellow
-            elif "closed" in st:
-                state_item.setForeground(QColor("#bf616a")) # Red
-                
-            model.appendRow([
-                QStandardItem(p),
-                state_item,
-                QStandardItem(sv),
-                QStandardItem(v)
-            ])
-            
-        table.setModel(model)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch) # Stretch Version column
-        table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        table.setAlternatingRowColors(True)
-        
-        # Style
-        table.setStyleSheet("QTableView { gridline-color: #4c566a; }")
+            si = QStandardItem(st)
+            if "open" in st: si.setForeground(QColor("#a3be8c"))
+            elif "filtered" in st: si.setForeground(QColor("#ebcb8b"))
+            elif "closed" in st: si.setForeground(QColor("#bf616a"))
+            m.appendRow([QStandardItem(p), si, QStandardItem(sv), QStandardItem(v)])
+        tv.setModel(m)
+        tv.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        tv.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        tv.setSelectionBehavior(QAbstractItemView.SelectRows)
+        tv.setAlternatingRowColors(True)
+        l.addWidget(tv)
+        self.tabs.addTab(tab, host.split(" ")[0])
 
-        layout.addWidget(table)
-        self.tabs.addTab(tab, host.split(" ")[0]) # Shorten tab name if IP is long
 
-# --- Statistics & Charts ---
+# --- Helper Stats Classes ---
 
 class StatsChartCanvas(FigureCanvas):
     def __init__(self, parent=None, width=5, height=4, dpi=100):
-        is_dark_theme = "dark" in parent.styleSheet().lower()
-        if is_dark_theme:
-            plt.style.use('dark_background')
-            self.fig = Figure(figsize=(width, height), dpi=dpi, facecolor='#2e3440')
-            self.axes = self.fig.add_subplot(111, facecolor='#2e3440')
+        is_dark = "dark" in parent.styleSheet().lower()
+        if is_dark: plt.style.use('dark_background'); fc='#2e3440'
+        else: plt.style.use('default'); fc='white'
+        self.fig = Figure(figsize=(width, height), dpi=dpi, facecolor=fc)
+        self.axes = self.fig.add_subplot(111, facecolor=fc)
+        if is_dark:
             self.axes.tick_params(axis='x', colors='white')
             self.axes.tick_params(axis='y', colors='white')
-        else:
-            plt.style.use('default')
-            self.fig = Figure(figsize=(width, height), dpi=dpi)
-            self.axes = self.fig.add_subplot(111)
         super().__init__(self.fig)
         self.setParent(parent)
-
-    def plot_bar_chart(self, labels, values, title, xlabel='Count'):
+    def plot_bar_chart(self, labels, values, title):
         self.axes.clear()
-        y_pos = range(len(labels))
-        self.axes.barh(y_pos, values, align='center', color='#81a1c1', height=0.6)
-        self.axes.set_yticks(y_pos)
-        self.axes.set_yticklabels(labels, fontsize=9)
-        self.axes.invert_yaxis()
-        self.axes.set_xlabel(xlabel)
-        self.axes.set_title(title)
-        self.fig.tight_layout()
+        y = range(len(labels))
+        self.axes.barh(y, values, color='#81a1c1')
+        self.axes.set_yticks(y); self.axes.set_yticklabels(labels)
+        self.axes.invert_yaxis(); self.axes.set_title(title)
         self.draw()
-
     def plot_pie_chart(self, labels, sizes, title):
         self.axes.clear()
-        self.axes.pie(sizes, labels=labels, autopct='%1.1f%%', shadow=True, startangle=90)
+        self.axes.pie(sizes, labels=labels, autopct='%1.1f%%')
         self.axes.set_title(title)
-        self.fig.tight_layout()
         self.draw()
 
 class StatisticsDialog(QDialog):
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.model = model
-        self.setWindowTitle("Dataset Statistics")
         self.resize(800, 600)
-        layout = QVBoxLayout(self)
-        self.chart_canvas = StatsChartCanvas(parent=self)
-        layout.addWidget(self.chart_canvas)
-        
-        codes = []
-        for row in range(self.model.rowCount()):
-            item = self.model.item(row, 5) # Status code col
-            if item: codes.append(item.text())
-        
-        counts = Counter(codes)
-        labels = list(counts.keys())
-        sizes = list(counts.values())
-        if labels:
-            self.chart_canvas.plot_pie_chart(labels, sizes, "Status Codes")
-            
-        btns = QDialogButtonBox(QDialogButtonBox.Ok)
-        btns.accepted.connect(self.accept)
-        layout.addWidget(btns)
+        l = QVBoxLayout(self)
+        self.chart = StatsChartCanvas(parent=self)
+        l.addWidget(self.chart)
+        codes = [self.model.item(r, 5).text() for r in range(self.model.rowCount()) if self.model.item(r, 5)]
+        c = Counter(codes)
+        if c: self.chart.plot_pie_chart(list(c.keys()), list(c.values()), "Status Codes")
+        l.addWidget(QDialogButtonBox(QDialogButtonBox.Ok, accepted=self.accept))
 
 class RiskAnalysisDialog(QDialog):
     def __init__(self, urls, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Risk Analysis")
-        layout = QVBoxLayout(self)
-        self.text = QTextEdit()
-        self.text.setReadOnly(True)
-        layout.addWidget(self.text)
-        
-        html_out = "<h3>Analysis Report</h3><ul>"
-        for url in urls[:50]: 
-            if "admin" in url: html_out += f"<li style='color:#bf616a'>{url} (High Risk)</li>"
-            else: html_out += f"<li>{url}</li>"
-        html_out += "</ul>"
-        self.text.setHtml(html_out)
-
-# --- Playground Window (Structured Table) ---
+        self.resize(600, 500)
+        l = QVBoxLayout(self)
+        t = QTextEdit(); t.setReadOnly(True)
+        l.addWidget(t)
+        h = "<h3>Analysis Report</h3><ul>"
+        for u in urls[:50]: h += f"<li style='color:{'#bf616a' if 'admin' in u else '#d8dee9'}'>{u}</li>"
+        t.setHtml(h + "</ul>")
 
 class NumericStandardItem(QStandardItem):
     def __lt__(self, other):
-        try:
-            return int(self.text()) < int(other.text())
-        except ValueError:
-            return self.text() < other.text()
+        try: return int(self.text()) < int(other.text())
+        except: return self.text() < other.text()
 
 class PlaygroundWindow(QDialog):
-    """Structured Viewer for httpx/table data."""
     def __init__(self, file_paths, terminal_widget, working_directory, parent=None):
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
         self.file_paths = file_paths
         self.terminal_widget = terminal_widget
         self.working_directory = working_directory
         self.starred_hosts = set()
-        self.starred_hosts_file = os.path.join(self.working_directory, "starred_hosts.txt")
-        self.load_starred_hosts()       
-        
-        title = f"Structured Viewer - {os.path.basename(file_paths[0])}"
-        if len(file_paths) > 1: title += f" (+{len(file_paths)-1} others)"
-        self.setWindowTitle(title)
-        self.setGeometry(150, 150, 1100, 700)
-
-        main_layout = QVBoxLayout(self)
-        
-        # Toolbar
-        top_bar = QHBoxLayout()
-        self.risk_btn = QPushButton("Analyze Risks")
-        self.risk_btn.clicked.connect(self.show_risk_analysis)
-        self.stats_btn = QPushButton("View Stats")
-        self.stats_btn.clicked.connect(self.show_stats)
-        
-        top_bar.addWidget(self.risk_btn)
-        top_bar.addStretch()
-        top_bar.addWidget(self.stats_btn)
-        main_layout.addLayout(top_bar)
-        
-        self.table_view = QTableView()
-        self.table_view.setSortingEnabled(True)
-        main_layout.addWidget(self.table_view)
-        
+        self.starred_hosts_file = os.path.join(working_directory, "starred_hosts.txt")
+        self.load_starred()
+        self.setWindowTitle(f"Structured Viewer - {len(file_paths)} files")
+        self.resize(1100, 700)
+        l = QVBoxLayout(self)
+        tb = QHBoxLayout()
+        b1 = QPushButton("Risks"); b1.clicked.connect(lambda: RiskAnalysisDialog([self.get_url(r) for r in range(self.model.rowCount())], self).exec_())
+        b2 = QPushButton("Stats"); b2.clicked.connect(lambda: StatisticsDialog(self.model, self).exec_())
+        tb.addWidget(b1); tb.addStretch(); tb.addWidget(b2)
+        l.addLayout(tb)
+        self.tv = QTableView(); self.tv.setSortingEnabled(True)
+        l.addWidget(self.tv)
         self.model = QStandardItemModel()
-        self.model.itemChanged.connect(self.on_item_changed)
-        self.load_and_parse_data()
-        
-        self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table_view.customContextMenuRequested.connect(self.open_context_menu)
-        self.table_view.doubleClicked.connect(self.on_cell_double_clicked)
+        self.model.itemChanged.connect(self.on_change)
+        self.load_data()
+        self.tv.setModel(self.model)
+        self.tv.resizeColumnsToContents()
+        self.tv.doubleClicked.connect(lambda i: webbrowser.open(self.get_url(i.row())) if i.column()==2 else None)
 
-    def load_starred_hosts(self):
+    def load_starred(self):
         if os.path.exists(self.starred_hosts_file):
+            with open(self.starred_hosts_file) as f: self.starred_hosts = set(x.strip() for x in f)
+    def save_starred(self):
+        with open(self.starred_hosts_file, 'w') as f: f.write('\n'.join(sorted(self.starred_hosts)))
+    def on_change(self, item):
+        if item.column() == 0:
+            h = self.model.item(item.row(), 2).text()
+            if item.checkState() == Qt.Checked: self.starred_hosts.add(h)
+            else: self.starred_hosts.discard(h)
+            self.save_starred()
+    def get_url(self, r):
+        return f"{self.model.item(r,1).text()}://{self.model.item(r,2).text()}{self.model.item(r,3).text()}"
+    def load_data(self):
+        self.model.setHorizontalHeaderLabels(['⭐', 'Schema', 'Host', 'Path', 'Ext', 'Status', 'Length', 'Tech'])
+        re_line = re.compile(r"^(?P<url>https?://[^\s]+)\s+\[\s*(?P<status_code>[\d,\s]+)\s*\]\s+\[\s*(?P<length>\d+)\s*\]")
+        ansi = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        for fp in self.file_paths:
             try:
-                with open(self.starred_hosts_file, 'r') as f:
-                    self.starred_hosts = set(line.strip() for line in f)
+                with open(fp, errors='ignore') as f:
+                    for line in f:
+                        m = re_line.match(ansi.sub('', line).strip())
+                        if not m: continue
+                        d = m.groupdict(); p = urlparse(d['url'])
+                        tm = re.search(r"\[\s*([^\]]+)\s*\]$", line)
+                        tech = tm.group(1) if tm and "]" not in d['length'] else ""
+                        si = QStandardItem(); si.setCheckable(True)
+                        if p.hostname in self.starred_hosts: si.setCheckState(Qt.Checked)
+                        st = int(d['status_code'].split(',')[-1])
+                        sti = NumericStandardItem(str(st))
+                        if 200<=st<300: sti.setForeground(QColor("#a3be8c"))
+                        elif 300<=st<400: sti.setForeground(QColor("#81a1c1"))
+                        elif 400<=st<500: sti.setForeground(QColor("#ebcb8b"))
+                        elif 500<=st<600: sti.setForeground(QColor("#bf616a"))
+                        self.model.appendRow([si, QStandardItem(p.scheme), QStandardItem(p.hostname), QStandardItem(p.path), QStandardItem(os.path.splitext(p.path)[1]), sti, NumericStandardItem(d['length']), QStandardItem(tech)])
             except: pass
 
-    def save_starred_hosts(self):
-        try:
-            with open(self.starred_hosts_file, 'w') as f:
-                for host in sorted(list(self.starred_hosts)):
-                    f.write(host + '\n')
-        except: pass
-
-    def on_item_changed(self, item):
-        if item.column() == 0:
-            row = item.row()
-            host_item = self.model.item(row, 2)
-            if host_item:
-                host = host_item.text()
-                if item.checkState() == Qt.Checked: self.starred_hosts.add(host)
-                else: self.starred_hosts.discard(host)
-                self.save_starred_hosts()
-
-    def get_url_from_row(self, row):
-        schema = self.model.item(row, 1).text()
-        host = self.model.item(row, 2).text()
-        path = self.model.item(row, 3).text()
-        return f"{schema}://{host}{path}"
-
-    def load_and_parse_data(self):
-        self.all_records = [rec for fp in self.file_paths for rec in self.parse_httpx_file(fp)]
-        headers = ['⭐', 'Schema', 'Host', 'Path', 'Ext', 'Status', 'Length', 'Tech']
-        self.model.setHorizontalHeaderLabels(headers)
-
-        for record in self.all_records:
-            host = record.get('host', '')
-            star_item = QStandardItem()
-            star_item.setCheckable(True)
-            star_item.setCheckState(Qt.Checked if host in self.starred_hosts else Qt.Unchecked)
-            
-            status = int(record.get('status_code', 0))
-            status_item = NumericStandardItem(str(status))
-            if 200 <= status < 300: status_item.setForeground(QColor("#a3be8c"))
-            elif 300 <= status < 400: status_item.setForeground(QColor("#81a1c1"))
-            elif 400 <= status < 500: status_item.setForeground(QColor("#ebcb8b"))
-            elif 500 <= status < 600: status_item.setForeground(QColor("#bf616a"))
-
-            row = [
-                star_item,
-                QStandardItem(record.get('schema')),
-                QStandardItem(host),
-                QStandardItem(record.get('path')),
-                QStandardItem(record.get('extension')),
-                status_item,
-                NumericStandardItem(str(record.get('length'))),
-                QStandardItem(record.get('technology'))
-            ]
-            self.model.appendRow(row)
-
-        self.table_view.setModel(self.model)
-        self.table_view.resizeColumnsToContents()
-        self.table_view.setColumnWidth(0, 30)
-
-    def parse_httpx_file(self, file_path):
-        records = []
-        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-        line_regex = re.compile(
-            r"^(?P<url>https?://[^\s]+)\s+"
-            r"\[\s*(?P<status_code>[\d,\s]+)\s*\]\s+"
-            r"\[\s*(?P<length>\d+)\s*\]"
-        )
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    clean = ansi_escape.sub('', line).strip()
-                    match = line_regex.match(clean)
-                    if not match: continue
-                    data = match.groupdict()
-                    parsed = urlparse(data['url'])
-                    
-                    tech_match = re.search(r"\[\s*([^\]]+)\s*\]$", clean)
-                    tech = tech_match.group(1) if tech_match and "]" not in data['length'] else ""
-
-                    records.append({
-                        'schema': parsed.scheme, 'host': parsed.hostname, 'path': parsed.path,
-                        'extension': os.path.splitext(parsed.path)[1], 
-                        'status_code': data['status_code'].split(',')[-1],
-                        'length': data['length'], 'technology': tech
-                    })
-        except: pass
-        return records
-
-    def on_cell_double_clicked(self, index):
-        if index.column() == 2: self.open_in_browser(index.row())
-
-    def open_context_menu(self, pos):
-        idx = self.table_view.indexAt(pos)
-        if not idx.isValid(): return
-        menu = QMenu()
-        menu.addAction("Open in Browser").triggered.connect(lambda: self.open_in_browser(idx.row()))
-        menu.exec_(self.table_view.viewport().mapToGlobal(pos))
-
-    def open_in_browser(self, row):
-        webbrowser.open(self.get_url_from_row(row))
-
-    def show_risk_analysis(self):
-        urls = [f"{rec['schema']}://{rec['host']}{rec['path']}" for rec in self.all_records]
-        RiskAnalysisDialog(urls, self).exec_()
-
-    def show_stats(self):
-        StatisticsDialog(self.model, self).exec_()
-
-
 # ==========================================
-#       REFACTORED: PlaygroundTabWidget
+#       PlaygroundTabWidget (Main)
 # ==========================================
 
 class PlaygroundTabWidget(QWidget):
-    """
-    Explorer-style File Viewer with Virtual Categories.
-    Features:
-    - Virtual Categories for 'Recon' and 'Settings'.
-    - Auto-detection for file opening (Nmap, Httpx/Structured, or Raw Log).
-    - Bagging for cluttered output files.
-    """
-    
-    # Virtual Grouping Rules (Exact filenames)
     RECON_FILES = {'naabu_out', 'nmap_out', 'nmap_targets.txt', 'nmap_udp_out'}
-    SETTINGS_FILES = {'scope.txt', 'domains.txt', 'project_data.db'}
+    SETTINGS_FILES = {'scope.txt', 'domains', 'project_data.db'}
 
     def __init__(self, working_directory, icon_path, terminal_widget, hostname_test=False, parent=None):
         super().__init__(parent)
@@ -558,322 +574,160 @@ class PlaygroundTabWidget(QWidget):
         self.current_path = working_directory
         self.icon_path = icon_path
         self.terminal_widget = terminal_widget
-        
         self.font_size = 12
-        
-        # --- Background Image Setup ---
         self.bg_pixmap = None
-        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        bg_path = os.path.join(base_path, "themes", "img", "pokemon", "playground_bg.png")
-        if os.path.exists(bg_path) and hostname_test == True:
-            self.bg_pixmap = QPixmap(bg_path)
-
-        # --- Layout ---
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-
-        # 1. Navigation Bar
-        nav_layout = QHBoxLayout()
-        self.btn_home = QToolButton()
-        self.btn_home.setText("🏠")
-        self.btn_home.setToolTip("Root")
-        self.btn_home.clicked.connect(self.go_home)
-
-        self.btn_up = QToolButton()
-        self.btn_up.setText("⬆")
-        self.btn_up.setToolTip("Up")
-        self.btn_up.clicked.connect(self.go_up)
         
-        self.path_edit = QLineEdit()
-        self.path_edit.setReadOnly(True)
-        self.path_edit.setStyleSheet("QLineEdit { background-color: #2e3440; color: #d8dee9; border: 1px solid #4c566a; border-radius: 4px; padding: 4px; }")
+        if hostname_test:
+            bp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "themes/img/pokemon/playground_bg.png")
+            if os.path.exists(bp): self.bg_pixmap = QPixmap(bp)
 
-        self.btn_refresh = QToolButton()
-        self.btn_refresh.setText("↻")
-        self.btn_refresh.setToolTip("Refresh")
-        self.btn_refresh.clicked.connect(self.refresh_playground)
-
-        nav_layout.addWidget(self.btn_home)
-        nav_layout.addWidget(self.btn_up)
-        nav_layout.addWidget(self.path_edit)
-        nav_layout.addWidget(self.btn_refresh)
-        layout.addLayout(nav_layout)
-
-        # 2. Tree Widget
-        self.tree_widget = QTreeWidget()
-        self.tree_widget.setHeaderHidden(True)
-        self.tree_widget.setSelectionMode(QTreeWidget.ExtendedSelection)
-        self.tree_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        l = QVBoxLayout(self); l.setContentsMargins(5,5,5,5)
         
-        self.tree_widget.itemDoubleClicked.connect(self.on_item_double_clicked)
-        self.tree_widget.customContextMenuRequested.connect(self.open_context_menu)
+        nl = QHBoxLayout()
+        b_home = QToolButton(); b_home.setText("🏠"); b_home.clicked.connect(self.go_home)
+        b_up = QToolButton(); b_up.setText("⬆"); b_up.clicked.connect(self.go_up)
+        self.path_edit = QLineEdit(); self.path_edit.setReadOnly(True)
+        self.path_edit.setStyleSheet("QLineEdit { background-color: #2e3440; color: #d8dee9; border: 1px solid #4c566a; }")
+        b_ref = QToolButton(); b_ref.setText("↻"); b_ref.clicked.connect(self.refresh_playground)
+        nl.addWidget(b_home); nl.addWidget(b_up); nl.addWidget(self.path_edit); nl.addWidget(b_ref)
+        l.addLayout(nl)
 
-        font = self.tree_widget.font()
-        font.setPointSize(self.font_size)
-        self.tree_widget.setFont(font)
-        self.tree_widget.setIconSize(QSize(24, 24))
+        self.tree = QTreeWidget(); self.tree.setHeaderHidden(True)
+        self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.itemDoubleClicked.connect(self.on_dclick)
+        self.tree.customContextMenuRequested.connect(self.on_ctx)
+        f = self.tree.font(); f.setPointSize(12); self.tree.setFont(f); self.tree.setIconSize(QSize(24,24))
         
-        # Styling for transparency if bg is present
         if self.bg_pixmap:
-            self.tree_widget.setStyleSheet("""
-                QTreeWidget { background-color: transparent; border: none; }
-                QTreeWidget::item { color: #ffffff; padding: 4px; } 
-                QTreeWidget::item:hover { background-color: rgba(255, 255, 255, 0.1); }
-                QTreeWidget::item:selected { background-color: rgba(129, 161, 193, 0.4); border: 1px solid #81a1c1; }
-            """)
-        else:
-             self.tree_widget.setStyleSheet("QTreeWidget::item { padding: 4px; }")
-
-        layout.addWidget(self.tree_widget)
+            self.tree.setStyleSheet("QTreeWidget { background: transparent; border: none; } QTreeWidget::item { color: white; } QTreeWidget::item:selected { background: #81a1c1; border: 1px solid #81a1c1; }")
+        else: self.tree.setStyleSheet("QTreeWidget::item { padding: 4px; }")
+        l.addWidget(self.tree)
         
-        # 3. Bottom Bar
-        btn_layout = QHBoxLayout()
-        open_btn = QPushButton("Open Selected")
-        open_btn.clicked.connect(self.open_smart)
-        btn_layout.addStretch()
-        btn_layout.addWidget(open_btn)
-        layout.addLayout(btn_layout)
-        
+        bl = QHBoxLayout()
+        b_open = QPushButton("Open Selected"); b_open.clicked.connect(self.open_smart)
+        bl.addStretch(); bl.addWidget(b_open)
+        l.addLayout(bl)
         self.refresh_playground()
 
-    def paintEvent(self, event):
-        if self.bg_pixmap and not self.bg_pixmap.isNull():
-            opt = QStyleOption()
-            opt.initFrom(self)
-            p = QPainter(self)
-            p.drawPixmap(self.rect(), self.bg_pixmap)
-        else:
-            super().paintEvent(event)
+    def paintEvent(self, e):
+        if self.bg_pixmap: QPainter(self).drawPixmap(self.rect(), self.bg_pixmap)
+        else: super().paintEvent(e)
 
     def go_up(self):
-        parent = os.path.dirname(self.current_path)
-        if parent and os.path.exists(parent):
-            self.current_path = parent
-            self.refresh_playground()
-
-    def go_home(self):
-        self.current_path = self.root_directory
-        self.refresh_playground()
+        p = os.path.dirname(self.current_path)
+        if p and os.path.exists(p): self.current_path = p; self.refresh_playground()
+    def go_home(self): self.current_path = self.root_directory; self.refresh_playground()
 
     def refresh_playground(self):
-        self.tree_widget.clear()
-        self.path_edit.setText(self.current_path)
-        
-        # --- Icons ---
-        folder_icon = self.get_icon("folder.svg", QStyle.SP_DirIcon)
-        file_icon = self.get_icon("file.svg", QStyle.SP_FileIcon)
-        bag_icon = self.get_icon("bag.svg", QStyle.SP_DirClosedIcon)
-        
-        # Using "category.svg" for Virtual Groups
-        category_icon = self.get_icon("category.svg", QStyle.SP_FileDialogListView)
-        
+        self.tree.clear(); self.path_edit.setText(self.current_path)
+        ic_f = self.get_icon("folder.svg", QStyle.SP_DirIcon)
+        ic_fi = self.get_icon("file.svg", QStyle.SP_FileIcon)
+        ic_b = self.get_icon("bag.svg", QStyle.SP_DirClosedIcon)
+        ic_c = self.get_icon("category.svg", QStyle.SP_FileDialogListView)
+
         try:
             entries = sorted(os.scandir(self.current_path), key=lambda e: (not e.is_dir(), e.name.lower()))
-            
-            # --- Containers (Virtual Items) ---
-            recon_group_item = None
-            settings_group_item = None
-            
-            unorganized_dirs = []
-            unorganized_files = []
+            recon, settings = None, None
+            udirs, ufiles = [], []
 
-            # --- Sorting Logic ---
-            for entry in entries:
-                name = entry.name
-                
-                # 1. Project Settings
-                if name in self.SETTINGS_FILES:
-                    if not settings_group_item:
-                        settings_group_item = QTreeWidgetItem(self.tree_widget)
-                        settings_group_item.setText(0, "Project Settings")
-                        settings_group_item.setIcon(0, category_icon) 
-                        settings_group_item.setData(0, Qt.UserRole + 1, "virtual_group")
-                        settings_group_item.setExpanded(True)
-                    
-                    self.add_file_child(settings_group_item, entry, file_icon)
+            for e in entries:
+                if e.name in self.SETTINGS_FILES:
+                    if not settings:
+                        settings = QTreeWidgetItem(self.tree, ["Project Settings"])
+                        settings.setIcon(0, ic_c); settings.setData(0, Qt.UserRole+1, "virtual"); settings.setExpanded(True)
+                    self.add_item(settings, e, ic_fi)
                     continue
-
-                # 2. Recon Data
-                if name in self.RECON_FILES:
-                    if not recon_group_item:
-                        recon_group_item = QTreeWidgetItem(self.tree_widget)
-                        recon_group_item.setText(0, "Reconnaissance Data")
-                        recon_group_item.setIcon(0, category_icon) 
-                        recon_group_item.setData(0, Qt.UserRole + 1, "virtual_group")
-                        recon_group_item.setExpanded(True)
-                    
-                    self.add_file_child(recon_group_item, entry, file_icon)
+                if e.name in self.RECON_FILES:
+                    if not recon:
+                        recon = QTreeWidgetItem(self.tree, ["Reconnaissance Data"])
+                        recon.setIcon(0, ic_c); recon.setData(0, Qt.UserRole+1, "virtual"); recon.setExpanded(True)
+                    self.add_item(recon, e, ic_fi)
                     continue
-
-                # 3. Special Real Folders (Exploits, Reports)
-                if entry.is_dir():
-                    if name == "exploits":
-                        item = QTreeWidgetItem(self.tree_widget)
-                        item.setText(0, "Exploits")
-                        item.setIcon(0, folder_icon)
-                        item.setData(0, Qt.UserRole, entry.path)
-                        item.setData(0, Qt.UserRole + 1, "dir")
+                if e.is_dir():
+                    if e.name in ["exploits", "reports"]:
+                        i = QTreeWidgetItem(self.tree, [e.name.capitalize()])
+                        i.setIcon(0, ic_f); i.setData(0, Qt.UserRole, e.path); i.setData(0, Qt.UserRole+1, "dir")
                         continue
-                        
-                    if name == "reports":
-                        item = QTreeWidgetItem(self.tree_widget)
-                        item.setText(0, "Reports")
-                        item.setIcon(0, folder_icon)
-                        item.setData(0, Qt.UserRole, entry.path)
-                        item.setData(0, Qt.UserRole + 1, "dir")
-                        continue
-                    
-                    unorganized_dirs.append(entry)
-                else:
-                    unorganized_files.append(entry)
+                    udirs.append(e)
+                else: ufiles.append(e)
 
-            # --- Render Unorganized Items ---
-            for d in unorganized_dirs:
-                item = QTreeWidgetItem(self.tree_widget)
-                item.setText(0, d.name)
-                item.setIcon(0, folder_icon)
-                item.setData(0, Qt.UserRole, d.path)
-                item.setData(0, Qt.UserRole + 1, "dir")
+            for d in udirs:
+                i = QTreeWidgetItem(self.tree, [d.name])
+                i.setIcon(0, ic_f); i.setData(0, Qt.UserRole, d.path); i.setData(0, Qt.UserRole+1, "dir")
 
             bags = {}
-            for entry in unorganized_files:
-                name = entry.name
-                if "_" in name:
-                    prefix = name.split('_')[0]
-                    if prefix not in bags:
-                        bag_item = QTreeWidgetItem(self.tree_widget)
-                        bag_item.setText(0, prefix)
-                        bag_item.setIcon(0, bag_icon)
-                        bag_item.setData(0, Qt.UserRole + 1, "bag")
-                        bags[prefix] = bag_item
-                    self.add_file_child(bags[prefix], entry, file_icon)
-                else:
-                    self.add_file_child(self.tree_widget, entry, file_icon)
-            
-        except Exception as e:
-            err_item = QTreeWidgetItem(self.tree_widget)
-            err_item.setText(0, f"Error: {e}")
+            for f in ufiles:
+                if "_" in f.name:
+                    pre = f.name.split('_')[0]
+                    if pre not in bags:
+                        bags[pre] = QTreeWidgetItem(self.tree, [pre])
+                        bags[pre].setIcon(0, ic_b); bags[pre].setData(0, Qt.UserRole+1, "bag")
+                    self.add_item(bags[pre], f, ic_fi)
+                else: self.add_item(self.tree, f, ic_fi)
+        except Exception as e: QTreeWidgetItem(self.tree, [f"Error: {e}"])
 
-    def add_file_child(self, parent, entry, icon):
-        item = QTreeWidgetItem(parent)
-        item.setText(0, entry.name)
-        item.setIcon(0, icon)
-        item.setData(0, Qt.UserRole, entry.path)
-        item.setData(0, Qt.UserRole + 1, "file")
+    def add_item(self, parent, entry, icon):
+        i = QTreeWidgetItem(parent, [entry.name])
+        i.setIcon(0, icon); i.setData(0, Qt.UserRole, entry.path); i.setData(0, Qt.UserRole+1, "file")
 
-    def get_icon(self, filename, fallback_standard_icon):
-        path = os.path.join(self.icon_path, filename)
-        if self.icon_path and os.path.exists(path):
-            return QIcon(path)
-        return self.style().standardIcon(fallback_standard_icon)
+    def get_icon(self, n, fallback):
+        p = os.path.join(self.icon_path, n)
+        return QIcon(p) if os.path.exists(p) else self.style().standardIcon(fallback)
 
-    # --- Interaction Logic ---
+    def on_dclick(self, item, col):
+        t = item.data(0, Qt.UserRole+1); p = item.data(0, Qt.UserRole)
+        if t == "dir": self.current_path = p; self.refresh_playground()
+        elif t in ["bag", "virtual"]: item.setExpanded(not item.isExpanded())
+        elif t == "file": self.open_smart(item)
 
-    def on_item_double_clicked(self, item, column):
-        item_type = item.data(0, Qt.UserRole + 1)
-        path = item.data(0, Qt.UserRole)
-
-        if item_type == "dir":
-            self.current_path = path
-            self.refresh_playground()
-        elif item_type in ["bag", "virtual_group"]:
-            item.setExpanded(not item.isExpanded())
-        elif item_type == "file":
-            self.open_smart(specific_item=item)
-
-    def open_smart(self, specific_item=None):
-        if specific_item: items = [specific_item]
-        else: items = self.tree_widget.selectedItems()
+    def open_smart(self, item=None):
+        items = [item] if item else self.tree.selectedItems()
+        files = [i for i in items if i.data(0, Qt.UserRole+1) == "file"]
+        if not files: return
         
-        if not items: return
-        file_items = [i for i in items if i.data(0, Qt.UserRole + 1) == "file"]
-        if not file_items: return
-
-        first_path = file_items[0].data(0, Qt.UserRole)
-        filename = os.path.basename(first_path)
-
-        # 1. Check for NMAP
-        if filename.startswith("nmap_") or self.is_nmap_file(first_path):
-            viewer = NmapViewer(first_path, self)
-            viewer.show()
-            return
-
-        # 2. Check for Structured HTTPX
-        if self.is_structured_httpx_file(first_path):
-            self.open_selection_as_table(file_items)
-            return
-
-        # 3. Default to Log Viewer
-        self.open_selection_as_log(file_items)
-
-    def is_nmap_file(self, path):
-        """Reads start of file to see if it looks like Nmap output."""
+        fp = files[0].data(0, Qt.UserRole)
+        if os.path.basename(fp).startswith("nmap_") or self.is_nmap(fp):
+            NmapViewer(fp, self).show(); return
+        
+        # Check if structured
         try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                head = f.read(512)
-                if "Nmap scan report for" in head or "# Nmap" in head:
-                    return True
+            with open(fp, errors='ignore') as f:
+                if re.match(r"^https?://[^\s]+\s+\[", re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', f.readline())):
+                    PlaygroundWindow([f.data(0, Qt.UserRole) for f in files], self.terminal_widget, self.current_path, self).show()
+                    return
         except: pass
-        return False
+        
+        TerminalLogViewer([f.data(0, Qt.UserRole) for f in files], self, working_directory=self.current_path).show()
 
-    def is_structured_httpx_file(self, path):
+    def is_nmap(self, p):
         try:
-            line_regex = re.compile(r"^https?://[^\s]+\s+\[\s*[\d,\s]+\s*\]\s+\[\s*\d+\s*\]")
-            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                for _ in range(5):
-                    line = f.readline()
-                    if not line: break
-                    clean = ansi_escape.sub('', line).strip()
-                    if line_regex.match(clean): return True
-        except: pass
-        return False
+            with open(p, errors='ignore') as f: return "Nmap scan" in f.read(512)
+        except: return False
 
-    def open_selection_as_table(self, items):
-        paths = [i.data(0, Qt.UserRole) for i in items]
-        viewer = PlaygroundWindow(paths, self.terminal_widget, self.current_path, self)
-        viewer.show()
-
-    def open_selection_as_log(self, items):
-        for item in items:
-            path = item.data(0, Qt.UserRole)
-            viewer = TerminalLogViewer(path, self)
-            viewer.show()
-
-    def open_context_menu(self, position):
-        item = self.tree_widget.itemAt(position)
+    def on_ctx(self, pos):
+        item = self.tree.itemAt(pos)
         if not item: return
+        t = item.data(0, Qt.UserRole+1); p = item.data(0, Qt.UserRole)
+        m = QMenu()
         
-        item_type = item.data(0, Qt.UserRole + 1)
-        path = item.data(0, Qt.UserRole)
+        if t == "dir":
+            m.addAction("Open Folder").triggered.connect(lambda: setattr(self, 'current_path', p) or self.refresh_playground())
+        elif t == "file":
+            sel = self.tree.selectedItems()
+            if len(sel) == 2:
+                m.addAction("Compare Selected Files").triggered.connect(lambda: DiffViewer(sel[0].text(0), self.read_file(sel[0]), sel[1].text(0), self.read_file(sel[1]), self).show())
+                m.addSeparator()
+            m.addAction("Open (Smart)").triggered.connect(lambda: self.open_smart(item))
+        m.exec_(self.tree.viewport().mapToGlobal(pos))
 
-        menu = QMenu()
-        if item_type == "dir":
-            menu.addAction("Open Folder").triggered.connect(lambda: setattr(self, 'current_path', path) or self.refresh_playground())
-            menu.addAction("Open Terminal Here").triggered.connect(lambda: self.open_system_terminal(path))
-        elif item_type == "file":
-            menu.addAction("Open in Nmap Viewer").triggered.connect(lambda: NmapViewer(path, self).show())
-            menu.addAction("Open in Structured Viewer").triggered.connect(lambda: self.open_selection_as_table([item]))
-            menu.addAction("Open in Log Viewer").triggered.connect(lambda: self.open_selection_as_log([item]))
-        menu.exec_(self.tree_widget.viewport().mapToGlobal(position))
+    def read_file(self, item):
+        try: 
+            with open(item.data(0, Qt.UserRole), errors='replace') as f: return f.read()
+        except: return ""
 
-    def open_system_terminal(self, path):
-        try:
-            if sys.platform == 'win32': os.system(f'start cmd /K "cd /d {path}"')
-            elif sys.platform == 'darwin': subprocess.run(['open', '-a', 'Terminal', path])
-            else: subprocess.Popen(['x-terminal-emulator', '--working-directory', path])
-        except: pass
-
-    def wheelEvent(self, event):
-        if event.modifiers() & Qt.ControlModifier:
-            delta = event.angleDelta().y()
-            if delta > 0: self.font_size = min(30, self.font_size + 1)
-            else: self.font_size = max(8, self.font_size - 1)
-            font = self.tree_widget.font()
-            font.setPointSize(self.font_size)
-            self.tree_widget.setFont(font)
-            icon_size = max(16, self.font_size + 12)
-            self.tree_widget.setIconSize(QSize(icon_size, icon_size))
-            event.accept()
-        else:
-            super().wheelEvent(event)
+    def wheelEvent(self, e):
+        if e.modifiers() & Qt.ControlModifier:
+            self.font_size = max(8, min(30, self.font_size + (1 if e.angleDelta().y() > 0 else -1)))
+            f = self.tree.font(); f.setPointSize(self.font_size); self.tree.setFont(f)
+            self.tree.setIconSize(QSize(self.font_size+12, self.font_size+12))
