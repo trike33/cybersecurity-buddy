@@ -2,6 +2,8 @@ import sys
 import random
 import os
 import glob
+import traceback
+import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QDialog, 
                              QVBoxLayout, QLabel, QPushButton, QWidget, 
                              QHBoxLayout, QStackedWidget, QFrame, QAction,
@@ -30,6 +32,148 @@ def resource_path(relative_path):
     except Exception:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+# ---------------------------------------------------------
+# UI COMPONENT: BEAUTIFUL BUDDY ALERT (Moved up for Scope)
+# ---------------------------------------------------------
+class BuddyAlert(QDialog):
+    """
+    A custom, frameless, beautiful dialog for health checks and crash reports.
+    """
+    def __init__(self, message, parent=None, is_error=False):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Dialog)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.resize(450, 280)
+
+        # Main Layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # Container Frame (for the border and background)
+        self.container = QFrame(self)
+        self.container.setObjectName("BuddyFrame")
+        
+        # Color Logic: Blue for tips, Red/Orange for crashes
+        border_col = "#ff5555" if is_error else "#00d2ff"
+        shadow_col = QColor(255, 85, 85, 120) if is_error else QColor(0, 210, 255, 100)
+        
+        self.container.setStyleSheet(f"""
+            QFrame#BuddyFrame {{
+                background-color: #1e1e2f;
+                border: 2px solid {border_col};
+                border-radius: 16px;
+            }}
+            QLabel {{ color: #ffffff; font-family: 'Segoe UI', Arial; }}
+        """)
+        
+        # Drop Shadow Effect
+        from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(20)
+        shadow.setXOffset(0)
+        shadow.setYOffset(0)
+        shadow.setColor(shadow_col)
+        self.container.setGraphicsEffect(shadow)
+
+        container_layout = QVBoxLayout(self.container)
+        container_layout.setSpacing(15)
+        container_layout.setContentsMargins(20, 25, 20, 25)
+
+        # Title / Header
+        lbl_title = QLabel("👾 CYBERSEC BUDDY")
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setStyleSheet(f"color: {border_col}; font-size: 14px; font-weight: bold; letter-spacing: 2px;")
+        
+        # Main Message
+        lbl_msg = QLabel(message)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("font-size: 18px; line-height: 1.4; color: #e0e0e0;")
+
+        # Action Button
+        btn_ok = QPushButton("Recover & Continue 🚀" if is_error else "Roger that! 🚀")
+        btn_ok.setCursor(Qt.PointingHandCursor)
+        btn_ok.setFixedSize(200, 45)
+        
+        grad_start = "#ff5555" if is_error else "#00d2ff"
+        grad_end = "#d53a3a" if is_error else "#3a7bd5"
+
+        btn_ok.setStyleSheet(f"""
+            QPushButton {{
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {grad_start}, stop:1 {grad_end});
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+                border-radius: 22px;
+                border: none;
+            }}
+            QPushButton:hover {{
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {grad_end}, stop:1 {grad_start});
+            }}
+        """)
+        btn_ok.clicked.connect(self.accept)
+
+        # Add widgets to layout
+        container_layout.addWidget(lbl_title)
+        container_layout.addWidget(lbl_msg)
+        container_layout.addStretch()
+        container_layout.addWidget(btn_ok, alignment=Qt.AlignCenter)
+
+        layout.addWidget(self.container)
+    
+    def mousePressEvent(self, event):
+        self.oldPos = event.globalPos()
+
+    def mouseMoveEvent(self, event):
+        delta = QPoint(event.globalPos() - self.oldPos)
+        self.move(self.x() + delta.x(), self.y() + delta.y())
+        self.oldPos = event.globalPos()
+
+# ---------------------------------------------------------
+# GLOBAL ERROR HANDLER
+# ---------------------------------------------------------
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    """
+    Catches unhandled exceptions, logs them, and displays the Buddy Faint Alert.
+    """
+    # 1. Allow KeyboardInterrupt (Ctrl+C) to pass through naturally
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+
+    # 2. Format the error trace
+    error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    
+    # 3. Log to file (Critical for debugging)
+    log_file = os.path.join(os.getcwd(), "crash_log.txt")
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*50}\n")
+            f.write(f"TIMESTAMP: {datetime.datetime.now()}\n")
+            f.write(f"{'='*50}\n")
+            f.write(error_msg)
+            f.write(f"{'='*50}\n")
+    except Exception as e:
+        print(f"Failed to write crash log: {e}")
+
+    # 4. Print to console for dev visibility
+    print("CRITICAL EXCEPTION CAUGHT:", error_msg)
+
+    # 5. Show Buddy Alert (If QApplication exists)
+    if QApplication.instance():
+        buddy_msg = (
+            "😵 <b>Oops, I fainted!</b><br>"
+            "I encountered a critical error and hit the floor.<br><br>"
+            "<i>Check crash_log.txt for the gory details.</i><br>"
+        )
+        try:
+            # Pass is_error=True for red styling
+            alert = BuddyAlert(buddy_msg, is_error=True)
+            alert.exec_()
+        except:
+            # If UI fails, fallback
+            pass
 
 # ---------------------------------------------------------
 # THE MODULE CONTAINER (The "Window Placeholder")
@@ -77,94 +221,6 @@ class ModuleContainerWindow(QMainWindow):
         if os.path.exists(qss_path):
             with open(qss_path, "r") as f:
                 self.setStyleSheet(f.read())
-# ---------------------------------------------------------
-# UI COMPONENT: BEAUTIFUL BUDDY ALERT
-# ---------------------------------------------------------
-class BuddyAlert(QDialog):
-    """
-    A custom, frameless, beautiful dialog for health checks.
-    """
-    def __init__(self, message, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Dialog)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.resize(450, 280)
-
-        # Main Layout
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-
-        # Container Frame (for the border and background)
-        self.container = QFrame(self)
-        self.container.setObjectName("BuddyFrame")
-        self.container.setStyleSheet("""
-            QFrame#BuddyFrame {
-                background-color: #1e1e2f;
-                border: 2px solid #00d2ff;
-                border-radius: 16px;
-            }
-            QLabel { color: #ffffff; font-family: 'Segoe UI', Arial; }
-        """)
-        
-        # Drop Shadow Effect
-        from PyQt5.QtWidgets import QGraphicsDropShadowEffect
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setXOffset(0)
-        shadow.setYOffset(0)
-        shadow.setColor(QColor(0, 210, 255, 100)) # Neon blue glow
-        self.container.setGraphicsEffect(shadow)
-
-        container_layout = QVBoxLayout(self.container)
-        container_layout.setSpacing(15)
-        container_layout.setContentsMargins(20, 25, 20, 25)
-
-        # Title / Header
-        lbl_title = QLabel("👾 CYBERSEC BUDDY")
-        lbl_title.setAlignment(Qt.AlignCenter)
-        lbl_title.setStyleSheet("color: #00d2ff; font-size: 14px; font-weight: bold; letter-spacing: 2px;")
-        
-        # Main Message
-        lbl_msg = QLabel(message)
-        lbl_msg.setWordWrap(True)
-        lbl_msg.setAlignment(Qt.AlignCenter)
-        lbl_msg.setStyleSheet("font-size: 18px; line-height: 1.4; color: #e0e0e0;")
-
-        # Action Button
-        btn_ok = QPushButton("Roger that! 🚀")
-        btn_ok.setCursor(Qt.PointingHandCursor)
-        btn_ok.setFixedSize(160, 45)
-        btn_ok.setStyleSheet("""
-            QPushButton {
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00d2ff, stop:1 #3a7bd5);
-                color: white;
-                font-weight: bold;
-                font-size: 14px;
-                border-radius: 22px;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3a7bd5, stop:1 #00d2ff);
-            }
-        """)
-        btn_ok.clicked.connect(self.accept)
-
-        # Add widgets to layout
-        container_layout.addWidget(lbl_title)
-        container_layout.addWidget(lbl_msg)
-        container_layout.addStretch()
-        container_layout.addWidget(btn_ok, alignment=Qt.AlignCenter)
-
-        layout.addWidget(self.container)
-    
-    # Optional: Allow dragging the frameless window
-    def mousePressEvent(self, event):
-        self.oldPos = event.globalPos()
-
-    def mouseMoveEvent(self, event):
-        delta = QPoint(event.globalPos() - self.oldPos)
-        self.move(self.x() + delta.x(), self.y() + delta.y())
-        self.oldPos = event.globalPos()
 
 # ---------------------------------------------------------
 # LAZY MODULE LOADER FACTORY
@@ -200,7 +256,7 @@ class ModuleManager:
         self.health_timer = QTimer()
         self.health_timer.timeout.connect(self.trigger_buddy_alert)
         # 2 hours = 7200000 ms. (Set to 10000 ms to test it quickly!)
-        self.check_interval = 1800000 
+        self.check_interval = 7200000 
         self.health_timer.start(self.check_interval)
 
     def trigger_buddy_alert(self):
@@ -336,8 +392,6 @@ class ModuleManager:
                 title = "Playground"
 
             else:
-                # Use the new alert style for errors/info too if you want!
-                # BuddyAlert(f"Module '{module_id}' is not yet linked.").exec_()
                 QMessageBox.information(None, "Coming Soon", f"Module '{module_id}' is not yet linked.")
                 return
 
@@ -356,17 +410,6 @@ class ModuleManager:
             QMessageBox.critical(None, "Load Error", f"Failed to load module '{module_id}':\n{str(e)}")
             import traceback
             traceback.print_exc()
-
-# ---------------------------------------------------------
-# PATH HELPER (Fixed Bug)
-# ---------------------------------------------------------
-def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
 
 # ---------------------------------------------------------
 # HELPER CLASSES
@@ -1208,6 +1251,11 @@ if __name__ == "__main__":
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     
     app = QApplication(sys.argv)
+    
+    # --- REGISTER GLOBAL EXCEPTION HANDLER ---
+    # This prevents the app from hard-crashing and shows the Buddy alert instead.
+    sys.excepthook = global_exception_handler
+    
     command_db.initialize_db()
 
     icon_path = resource_path(os.path.join("resources", "img", "app.png"))
@@ -1215,23 +1263,20 @@ if __name__ == "__main__":
         app.setWindowIcon(QIcon(icon_path))
 
     # 1. Run Wizard
-    # (Uncomment the real wizard logic when pasting)
     wizard = StartupWizard()
     if wizard.exec_() != QDialog.Accepted:
         sys.exit(0)
     
-    # 2. Initialize Module Manager (The Logic Controller)
+    # 2. Initialize Module Manager
     manager = ModuleManager(wizard.project_db_path, wizard.engagement_type)
     
-    # 3. Launch the Hub (The UI)
+    # 3. Launch the Hub
     base_asset_path = resource_path(".")
-    # Project name extraction
     proj_name = os.path.basename(os.path.dirname(wizard.project_db_path)) if wizard.project_db_path else "New Project"
     
     launcher = AppLauncher(proj_name, base_asset_path)
     
     # 4. Connect Hub Signal to Manager Logic
-    # This is the magic link. Launcher emits string -> Manager lazy loads module.
     launcher.launch_module_signal.connect(manager.launch_module)
     
     launcher.showMaximized()

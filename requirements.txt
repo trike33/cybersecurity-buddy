@@ -26,3 +26,4 @@ six
 soupsieve
 typing_extensions
 urllib3
+datetime
