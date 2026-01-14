@@ -77,14 +77,102 @@ class ModuleContainerWindow(QMainWindow):
         if os.path.exists(qss_path):
             with open(qss_path, "r") as f:
                 self.setStyleSheet(f.read())
+# ---------------------------------------------------------
+# UI COMPONENT: BEAUTIFUL BUDDY ALERT
+# ---------------------------------------------------------
+class BuddyAlert(QDialog):
+    """
+    A custom, frameless, beautiful dialog for health checks.
+    """
+    def __init__(self, message, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Dialog)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.resize(450, 280)
+
+        # Main Layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # Container Frame (for the border and background)
+        self.container = QFrame(self)
+        self.container.setObjectName("BuddyFrame")
+        self.container.setStyleSheet("""
+            QFrame#BuddyFrame {
+                background-color: #1e1e2f;
+                border: 2px solid #00d2ff;
+                border-radius: 16px;
+            }
+            QLabel { color: #ffffff; font-family: 'Segoe UI', Arial; }
+        """)
+        
+        # Drop Shadow Effect
+        from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(20)
+        shadow.setXOffset(0)
+        shadow.setYOffset(0)
+        shadow.setColor(QColor(0, 210, 255, 100)) # Neon blue glow
+        self.container.setGraphicsEffect(shadow)
+
+        container_layout = QVBoxLayout(self.container)
+        container_layout.setSpacing(15)
+        container_layout.setContentsMargins(20, 25, 20, 25)
+
+        # Title / Header
+        lbl_title = QLabel("👾 CYBERSEC BUDDY")
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setStyleSheet("color: #00d2ff; font-size: 14px; font-weight: bold; letter-spacing: 2px;")
+        
+        # Main Message
+        lbl_msg = QLabel(message)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("font-size: 18px; line-height: 1.4; color: #e0e0e0;")
+
+        # Action Button
+        btn_ok = QPushButton("Roger that! 🚀")
+        btn_ok.setCursor(Qt.PointingHandCursor)
+        btn_ok.setFixedSize(160, 45)
+        btn_ok.setStyleSheet("""
+            QPushButton {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00d2ff, stop:1 #3a7bd5);
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+                border-radius: 22px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3a7bd5, stop:1 #00d2ff);
+            }
+        """)
+        btn_ok.clicked.connect(self.accept)
+
+        # Add widgets to layout
+        container_layout.addWidget(lbl_title)
+        container_layout.addWidget(lbl_msg)
+        container_layout.addStretch()
+        container_layout.addWidget(btn_ok, alignment=Qt.AlignCenter)
+
+        layout.addWidget(self.container)
+    
+    # Optional: Allow dragging the frameless window
+    def mousePressEvent(self, event):
+        self.oldPos = event.globalPos()
+
+    def mouseMoveEvent(self, event):
+        delta = QPoint(event.globalPos() - self.oldPos)
+        self.move(self.x() + delta.x(), self.y() + delta.y())
+        self.oldPos = event.globalPos()
 
 # ---------------------------------------------------------
 # LAZY MODULE LOADER FACTORY
 # ---------------------------------------------------------
 class ModuleManager:
     """
-    Handles the lazy loading of modules.
-    Only imports and instantiates what is requested.
+    Handles the lazy loading of modules and acts as the 
+    Context-Aware CyberSec Buddy.
     """
     def __init__(self, project_db_path, engagement_type):
         self.project_db_path = project_db_path
@@ -104,6 +192,62 @@ class ModuleManager:
         # Keep track of open windows so they don't get garbage collected
         self.open_windows = []
 
+        # --- START BUDDY TIMER ---
+        self.recent_alerts = []
+        self.setup_health_monitor()
+
+    def setup_health_monitor(self):
+        self.health_timer = QTimer()
+        self.health_timer.timeout.connect(self.trigger_buddy_alert)
+        # 2 hours = 7200000 ms. (Set to 10000 ms to test it quickly!)
+        self.check_interval = 1800000 
+        self.health_timer.start(self.check_interval)
+
+    def trigger_buddy_alert(self):
+        """
+        Triggers a context-aware alert.
+        Ensures the last 2 messages are not repeated.
+        """
+        # A rich list of messages with HTML formatting for the UI
+        all_messages = [
+            # Hydration
+            "💧 <b>Hydration Check:</b><br>You've been scanning for ages.<br>Hydrate or diedrate!",
+            "🚰 <b>Water Break:</b><br>Your brain is 73% water.<br>Refill the tank to keep the shells popping.",
+            
+            # Coffee
+            "☕ <b>Caffeine Critical:</b><br>Packet loss detected in user energy levels.<br>Go grab a fresh coffee.",
+            "🍵 <b>Bean Juice Time:</b><br>Step away from the screen.<br>Brew something warm.<br>Smell the beans.",
+
+            # Social / Colleagues
+            "🗣️ <b>Human Protocol:</b><br>Go bother a colleague.<br>Social engineering requires... socializing.<br>Say hello to someone!",
+            "🤝 <b>Touch Grass (Or Carpet):</b><br>Walk over to a teammate.<br>Ask them about their day.<br>Don't mention the pentest.",
+
+            # Physical / Eyes
+            "👀 <b>Vision Saving:</b><br>Look at something 20 feet away<br>for 20 seconds.<br>Do it right now.",
+            "🧘 <b>Posture Check:</b><br>Unclench your jaw.<br>Drop your shoulders.<br>Fix the shrimp posture.",
+            "🧠 <b>Brain Fog Alert:</b><br>Deep breath.<br>You're doing great work,<br>but your brain needs oxygen."
+        ]
+        
+        # Filter out messages that were shown recently
+        available_messages = [m for m in all_messages if m not in self.recent_alerts]
+        
+        # Fallback if we somehow exhausted the list (unlikely with this logic, but safe coding)
+        if not available_messages:
+            available_messages = all_messages
+            self.recent_alerts = []
+
+        # Select a random message
+        encouragement = random.choice(available_messages)
+        
+        # Update History (Keep only the last 2)
+        self.recent_alerts.append(encouragement)
+        if len(self.recent_alerts) > 2:
+            self.recent_alerts.pop(0)
+
+        # Launch the Beautiful Alert
+        alert = BuddyAlert(encouragement)
+        alert.exec_()
+
     def launch_module(self, module_id):
         widget = None
         title = "Tool"
@@ -111,13 +255,11 @@ class ModuleManager:
         # LAZY IMPORTS: We only import inside the `if` block
         try:
             if module_id == "settings":
-                # Project Settings Dialog
                 dlg = project_db.ProjectEditDialog(None, self.project_db_path)
                 if dlg.exec_() == QDialog.Accepted:
-                    # Update cached data if user changed it
                     self.project_data = project_db.load_project_data(self.project_db_path)
                     self.client_name = self.project_data.get('client_name', 'Unknown')
-                return # Not a window, so return early
+                return 
 
             elif module_id == "scan":
                 from modules.scan_control import ScanControlWidget
@@ -156,7 +298,6 @@ class ModuleManager:
 
             elif module_id == "dashboard":
                 from modules.dashboard import DashboardWidget
-                # Check for hostname logic if needed
                 whitelisted = ["stegosaurus", "ankylo"]
                 is_home = socket.gethostname() in whitelisted
                 widget = DashboardWidget(self.project_db_path, hostname_test=is_home)
@@ -189,19 +330,18 @@ class ModuleManager:
 
             elif module_id == "play":
                 from modules.playground import PlaygroundTabWidget
-                from modules.custom_commands import CustomCommandsWidget # Dependency
+                from modules.custom_commands import CustomCommandsWidget
                 term = CustomCommandsWidget(self.working_directory, self.icon_path)
-                # Note: Playground usually needs the terminal passed to it
                 widget = PlaygroundTabWidget(self.working_directory, self.icon_path, term, hostname_test=False)
                 title = "Playground"
 
-            # Add other modules (cve, payload, etc) similarly...
             else:
+                # Use the new alert style for errors/info too if you want!
+                # BuddyAlert(f"Module '{module_id}' is not yet linked.").exec_()
                 QMessageBox.information(None, "Coming Soon", f"Module '{module_id}' is not yet linked.")
                 return
 
             if widget:
-                # Wrap the widget in our Container Window
                 window = ModuleContainerWindow(
                     module_widget=widget,
                     title=title,
@@ -209,10 +349,7 @@ class ModuleManager:
                     engagement_type=self.engagement_type
                 )
                 window.showMaximized()
-                
-                # Keep reference so it stays open
                 self.open_windows.append(window)
-                # Optional: Clean up closed windows from the list
                 window.destroyed.connect(lambda: self.open_windows.remove(window) if window in self.open_windows else None)
 
         except Exception as e:
@@ -294,7 +431,7 @@ class StartupWizard(QDialog):
         wallpaper_dir = os.path.join(base_path, "themes", "img")
         
         # Check for whitelisted hostname for Pokemon wallpapers
-        whitelisted_hostnames = [, 'stegosaurus', 'ankylo']
+        whitelisted_hostnames = ['stegosaurus', 'ankylo']
         if socket.gethostname() in whitelisted_hostnames:
              # Try specific pokemon folder if it exists
              poke_path = os.path.join(wallpaper_dir, "pokemon")
