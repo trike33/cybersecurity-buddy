@@ -5,3 +5,4 @@ build/
 dist/
 *.AppImage
 *.spec
+themes/pokemon_assets/

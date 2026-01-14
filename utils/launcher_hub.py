@@ -1,49 +1,52 @@
 import os
+import sys # Added for folder opening
+import subprocess # Added for folder opening on Linux/Mac
 import random
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QFrame, QGridLayout, QScrollArea, 
-                             QGraphicsDropShadowEffect)
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
+                             QGraphicsDropShadowEffect, QMenu, QAction, QPushButton, QFileDialog)
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QSettings
 from PyQt5.QtGui import QFont, QCursor, QColor, QMovie, QPixmap, QBrush, QPalette
 
 # ---------------------------------------------------------
-# 1. INTERACTIVE POKEMON LABEL
+# 1. INTERACTIVE POKEMON LABEL (Selectable Folder)
 # ---------------------------------------------------------
 class InteractivePokemonLabel(QLabel):
     def __init__(self, asset_base_path, parent=None):
         super().__init__(parent)
         self.asset_base_path = asset_base_path
         self.current_movie = None
+        
+        # Persistent Settings (To remember your folder choice)
+        self.settings = QSettings("CyberSecBuddy", "MascotConfig")
+
+        # --- PATH DEFINITIONS ---
+        # 1. Safe Default (Shipped with App)
+        self.default_path = os.path.join(self.asset_base_path, "resources", "img", "mascot")
+        
+        # 2. Hardcoded User Override (Legacy support)
+        self.legacy_custom_path = os.path.join(self.asset_base_path, "themes", "pokemon_assets")
+        
+        # UI Setup
         self.setCursor(Qt.PointingHandCursor)
         self.setAlignment(Qt.AlignCenter)
-        self.setFixedSize(100, 100)
+        self.setFixedSize(120, 120)
         self.setStyleSheet("background: transparent;")
         
+        # --- Reaction Icon (Heart) ---
         self.heart_lbl = QLabel(self)
         self.heart_lbl.setFixedSize(32, 32)
-        self.heart_lbl.move(60, 10) 
+        self.heart_lbl.move(80, 10) 
         self.heart_lbl.hide()
         
-        self.heart_pixmap = None
-        potential_heart_paths = [
-            os.path.join(self.asset_base_path, "themes", "pokemon_assets", "heart.png"),
-            os.path.join(self.asset_base_path, "resources", "img", "heart.png"),
-            os.path.join(self.asset_base_path, "heart.png")
-        ]
-        
-        for p in potential_heart_paths:
-            if os.path.exists(p):
-                self.heart_pixmap = QPixmap(p).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.heart_lbl.setPixmap(self.heart_pixmap)
-                break
-        
-        if not self.heart_pixmap:
-             self.heart_lbl.setStyleSheet("background-color: #ff5555; border-radius: 16px; border: 2px solid white;")
+        # Initialize Heart Icon
+        self.update_heart_icon()
 
         self.heart_timer = QTimer(self)
         self.heart_timer.setSingleShot(True)
         self.heart_timer.timeout.connect(self.heart_lbl.hide)
         
+        # Load immediately
         self.load_random_pokemon()
 
     def mousePressEvent(self, event):
@@ -51,50 +54,135 @@ class InteractivePokemonLabel(QLabel):
             self.pet_pokemon()
         super().mousePressEvent(event)
 
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        
+        # Action 1: Cycle to next GIF
+        reload_action = QAction("🔄 Next Mascot", self)
+        reload_action.triggered.connect(self.load_random_pokemon)
+        menu.addAction(reload_action)
+        
+        menu.addSeparator()
+
+        # Action 2: Change the source folder
+        change_folder_action = QAction("📂 Select Mascot Folder...", self)
+        change_folder_action.triggered.connect(self.select_custom_folder)
+        menu.addAction(change_folder_action)
+
+        # Action 3: Reset to Default
+        reset_action = QAction("❌ Reset to Default", self)
+        reset_action.triggered.connect(self.reset_to_default)
+        menu.addAction(reset_action)
+        
+        menu.exec_(event.globalPos())
+
     def pet_pokemon(self):
         self.heart_lbl.show()
         self.heart_lbl.raise_()
         self.heart_timer.start(1500) 
 
+    def select_custom_folder(self):
+        """Opens a dialog for the user to pick any folder on their PC."""
+        folder = QFileDialog.getExistingDirectory(self, "Select Mascot Assets Folder")
+        if folder:
+            # Save the path to settings
+            self.settings.setValue("custom_mascot_path", folder)
+            # Reload immediately
+            self.load_random_pokemon()
+            self.update_heart_icon()
+
+    def reset_to_default(self):
+        """Clears the user's custom selection."""
+        self.settings.remove("custom_mascot_path")
+        self.load_random_pokemon()
+        self.update_heart_icon()
+
+    def get_active_folder(self):
+        """
+        Determines priority:
+        1. User's Selected Folder (via Menu)
+        2. Hardcoded 'themes/pokemon_assets' (if valid)
+        3. Default 'resources/img/mascot'
+        """
+        # 1. Check Saved Setting
+        saved_path = self.settings.value("custom_mascot_path")
+        if saved_path and os.path.exists(saved_path):
+             return saved_path
+
+        # 2. Check Legacy Folder
+        if os.path.exists(self.legacy_custom_path):
+            # Verify it actually has content
+            for root, dirs, files in os.walk(self.legacy_custom_path):
+                for f in files:
+                    if f.lower().endswith('.gif'):
+                        return self.legacy_custom_path
+
+        # 3. Fallback
+        return self.default_path
+
+    def update_heart_icon(self):
+        """Refresh the heart icon based on the active folder."""
+        folder = self.get_active_folder()
+        heart_path = os.path.join(folder, "heart.png")
+        
+        # Check specific folder first, then default fallback
+        if not os.path.exists(heart_path):
+            heart_path = os.path.join(self.default_path, "heart.png")
+
+        if os.path.exists(heart_path):
+            self.heart_lbl.setPixmap(QPixmap(heart_path).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.heart_lbl.setStyleSheet("background: transparent;")
+        else:
+            self.heart_lbl.setPixmap(QPixmap())
+            self.heart_lbl.setStyleSheet("background-color: #ff5555; border-radius: 16px; border: 2px solid white;")
+
+    def open_current_folder(self):
+        """Legacy helper if you still want the button to open the folder."""
+        folder = self.get_active_folder()
+        if not os.path.exists(folder): return
+        try:
+            if sys.platform == 'win32': os.startfile(folder)
+            elif sys.platform == 'darwin': subprocess.call(['open', folder])
+            else: subprocess.call(['xdg-open', folder])
+        except: pass
+
     def load_random_pokemon(self):
-        possible_roots = [
-            os.path.join(self.asset_base_path, "themes", "pokemon_assets"),
-            os.path.join(self.asset_base_path, "resources", "img", "pokemon"),
-        ]
-        
-        found_root = None
-        for root in possible_roots:
-            if os.path.exists(root):
-                found_root = root
-                break
-        
-        if not found_root:
-            self.setText("No Assets")
+        target_folder = self.get_active_folder()
+
+        if not os.path.exists(target_folder):
+            self.setText("No Path")
             return
 
         try:
-            all_gifs = []
-            for dirpath, _, filenames in os.walk(found_root):
-                for f in filenames:
-                    if f.lower().endswith(".gif"):
-                        all_gifs.append(os.path.join(dirpath, f))
+            gifs = []
+            # RECURSIVE SEARCH: Finds gifs in Gen1/Gen2 subfolders
+            for root, dirs, files in os.walk(target_folder):
+                for file in files:
+                    if file.lower().endswith(".gif"):
+                        gifs.append(os.path.join(root, file))
             
-            if not all_gifs:
+            if not gifs:
+                # If selected folder is empty, try reverting to default temporarily
+                if target_folder != self.default_path:
+                    self.settings.remove("custom_mascot_path") # Auto-reset bad path
+                    self.load_random_pokemon() # Retry
+                    return
                 self.setText("No GIFs")
                 return
 
-            gif_path = random.choice(all_gifs)
+            gif_path = random.choice(gifs)
             
             if self.current_movie:
                 self.current_movie.stop()
                 self.current_movie.deleteLater()
 
             self.current_movie = QMovie(gif_path)
-            self.current_movie.setScaledSize(QSize(80, 80))
+            self.current_movie.setCacheMode(QMovie.CacheAll)
+            self.current_movie.setScaledSize(QSize(100, 100))
             self.setMovie(self.current_movie)
             self.current_movie.start()
             self.setText("") 
-
+            
         except Exception as e:
             print(f"Error loading Pokemon: {e}")
             self.setText("Error")
@@ -108,7 +196,6 @@ class ToolCard(QFrame):
     def __init__(self, title, description, module_id, theme_color, bg_color, parent=None):
         super().__init__(parent)
         self.module_id = module_id
-        # Adjusted width to fit 5 columns comfortably in 1280px
         self.setFixedSize(240, 160) 
         self.setCursor(QCursor(Qt.PointingHandCursor))
         self.setObjectName("ToolCard")
@@ -227,14 +314,43 @@ class AppLauncher(QMainWindow):
         layout.addLayout(text_layout)
         layout.addStretch()
 
+        # --- COMPANION FRAME ---
         companion_frame = QFrame()
-        companion_frame.setFixedSize(140, 120)
+        companion_frame.setFixedSize(140, 130) # Height increased slightly for buttons
         companion_frame.setStyleSheet("background-color: #252530; border: 1px solid #444; border-radius: 10px;")
+        
         comp_layout = QVBoxLayout(companion_frame)
         comp_layout.setAlignment(Qt.AlignCenter)
+        comp_layout.setSpacing(2)
+        comp_layout.setContentsMargins(5, 5, 5, 5)
         
+        # 1. The Mascot Label
         self.poke_label = InteractivePokemonLabel(self.base_asset_path)
         comp_layout.addWidget(self.poke_label)
+        
+        # 2. NEW: Control Buttons (Cycle | Open Folder)
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(5)
+        
+        # Cycle Button
+        btn_next = QPushButton("⟳")
+        btn_next.setToolTip("Cycle to next mascot")
+        btn_next.setFixedSize(25, 20)
+        btn_next.setCursor(Qt.PointingHandCursor)
+        btn_next.setStyleSheet("QPushButton { background: #3a3a4a; color: #aaa; border: none; border-radius: 4px; font-weight: bold; } QPushButton:hover { background: #00d2ff; color: white; }")
+        btn_next.clicked.connect(self.poke_label.load_random_pokemon)
+        
+        # Folder Button
+        btn_folder = QPushButton("📂")
+        btn_folder.setToolTip("Open assets folder")
+        btn_folder.setFixedSize(25, 20)
+        btn_folder.setCursor(Qt.PointingHandCursor)
+        btn_folder.setStyleSheet("QPushButton { background: #3a3a4a; color: #aaa; border: none; border-radius: 4px; } QPushButton:hover { background: #00d2ff; color: white; }")
+        btn_folder.clicked.connect(self.poke_label.open_current_folder)
+        
+        btn_layout.addWidget(btn_next)
+        btn_layout.addWidget(btn_folder)
+        comp_layout.addLayout(btn_layout)
         
         layout.addWidget(companion_frame)
         self.main_layout.addWidget(header)
@@ -276,7 +392,7 @@ class AppLauncher(QMainWindow):
         # Create 5 Vertical Layouts
         for cat_name, apps in categories.items():
             col_container = QWidget()
-            col_container.setFixedWidth(250) # Enforce column width
+            col_container.setFixedWidth(250) 
             col_layout = QVBoxLayout(col_container)
             col_layout.setContentsMargins(0, 0, 0, 0)
             col_layout.setSpacing(15)
@@ -286,7 +402,7 @@ class AppLauncher(QMainWindow):
             lbl_header = QLabel(cat_name)
             lbl_header.setFont(QFont("Arial", 11, QFont.Bold))
             lbl_header.setStyleSheet("color: #8888aa; text-transform: uppercase; margin-bottom: 5px; border-bottom: 2px solid #333; padding-bottom: 5px;")
-            lbl_header.setWordWrap(True) # Wrap long headers
+            lbl_header.setWordWrap(True) 
             col_layout.addWidget(lbl_header)
 
             # 2. App Cards
@@ -295,10 +411,7 @@ class AppLauncher(QMainWindow):
                 card.clicked.connect(self.on_card_clicked)
                 col_layout.addWidget(card)
             
-            # 3. Stretch to push items up
             col_layout.addStretch()
-            
-            # Add column to main horizontal layout
             self.content_layout.addWidget(col_container)
 
     def setup_footer(self):
