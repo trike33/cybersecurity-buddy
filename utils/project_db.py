@@ -207,14 +207,31 @@ def get_hosts_for_service(db_path, service):
 
 # --- ENUMERATION TRACKING ---
 
-def sync_enum_data(db_path, data_list):
+def sync_enum_data(db_path, data_list, completed_step=None):
     if not os.path.exists(db_path): return
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
+    
     for item in data_list:
-        c.execute("SELECT id FROM enum WHERE host=? AND port=?", (item['host'], item['port']))
-        if not c.fetchone():
-            c.execute("INSERT INTO enum (host, port, service) VALUES (?, ?, ?)", (item['host'], item['port'], item['service']))
+        # 1. Handle dynamic port ranges (e.g. "80-8080-8000" or "80,8080")
+        raw_port = str(item['port'])
+        normalized_ports = raw_port.replace('-', ',')
+        port_list = [p.strip() for p in normalized_ports.split(',') if p.strip()]
+
+        for single_port in port_list:
+            # 2. Check and Insert each port individually
+            c.execute("SELECT id FROM enum WHERE host=? AND port=?", (item['host'], single_port))
+            if not c.fetchone():
+                c.execute("INSERT INTO enum (host, port, service) VALUES (?, ?, ?)", 
+                          (item['host'], single_port, item['service']))
+
+    # 3. Update Progress (For the Ringing Bell feature)
+    if completed_step:
+        try:
+            c.execute("UPDATE progress SET completed=1 WHERE step=?", (completed_step,))
+        except Exception as e:
+            print(f"Error updating progress: {e}")
+
     conn.commit(); conn.close()
 
 def enum_record_exists(db_path, host, service):

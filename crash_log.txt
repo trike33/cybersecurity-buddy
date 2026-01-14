@@ -1,0 +1,10 @@
+
+==================================================
+TIMESTAMP: 2026-01-14 17:21:20.148595
+==================================================
+Traceback (most recent call last):
+  File "/home/joanf/cybersecurity-buddy/modules/exploiting.py", line 616, in on_exploit_selected
+    self.right_tabs.setCurrentIndex(0)
+    ^^^^^^^^^^^^^^^
+AttributeError: 'ExploitingWidget' object has no attribute 'right_tabs'
+==================================================

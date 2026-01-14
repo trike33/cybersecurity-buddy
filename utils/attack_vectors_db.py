@@ -22,10 +22,11 @@ def _get_resources_db_path(provided_path=None):
 def initialize_attack_db(db_path=None):
     """
     Initializes the attack vectors database in resources/ if needed.
+    Also handles importing from a CSV if the DB is empty.
     """
     final_path = _get_resources_db_path(db_path)
     
-    # Ensure directory exists (redundant if using helper, but good for safety)
+    # Ensure directory exists
     db_dir = os.path.dirname(final_path)
     if db_dir and not os.path.exists(db_dir):
         os.makedirs(db_dir)
@@ -33,7 +34,7 @@ def initialize_attack_db(db_path=None):
     conn = sqlite3.connect(final_path)
     c = conn.cursor()
     
-    # Create Table
+    # Create Table - ports is TEXT to support "80-8080"
     c.execute('''CREATE TABLE IF NOT EXISTS attacks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     service TEXT NOT NULL,
@@ -43,91 +44,37 @@ def initialize_attack_db(db_path=None):
                     dangerous INTEGER DEFAULT 0
                 )''')
     
-    # Check if empty, maybe seed default data if available
+    # Check if empty, if so try to seed from CSV
     c.execute("SELECT count(*) FROM attacks")
     if c.fetchone()[0] == 0:
-        # Check for a default csv in utils to seed from
-        seed_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "attacks.csv")
-        if os.path.exists(seed_csv):
-            import_from_csv(final_path, seed_csv)
-            print(f"[AttackDB] Seeded database from {seed_csv}")
-        
+        csv_path = os.path.join(os.path.dirname(final_path), "Attack_vectors.csv")
+        # You can also look for the uploaded file name
+        if not os.path.exists(csv_path):
+             # Fallback check for the file you uploaded
+             csv_path = os.path.join(os.path.dirname(final_path), "Attack_vectors - Full 1.csv")
+
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    to_insert = []
+                    for row in reader:
+                        to_insert.append((
+                            row.get('service', 'unknown'),
+                            row.get('ports', '0'),
+                            row.get('attack_name', 'Unknown Attack'),
+                            int(row.get('auth_required', 0)),
+                            int(row.get('dangerous', 0))
+                        ))
+                    
+                    c.executemany("INSERT INTO attacks (service, ports, attack_name, auth_required, dangerous) VALUES (?, ?, ?, ?, ?)", to_insert)
+                    print(f"[AttackDB] Seeded {len(to_insert)} vectors from CSV.")
+            except Exception as e:
+                print(f"[AttackDB] Error seeding from CSV: {e}")
+
     conn.commit()
     conn.close()
     return final_path
-
-def import_from_csv(db_path, csv_path):
-    """
-    Imports attack vectors from a CSV file.
-    Expected headers: service, ports, attack_name, auth_required, dangerous
-    Returns: (bool_success, message)
-    """
-    if not os.path.exists(csv_path):
-        return False, "CSV file not found."
-
-    try:
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            
-            # Normalize headers (strip whitespace)
-            reader.fieldnames = [name.strip() for name in reader.fieldnames]
-            
-            required = {'service', 'ports', 'attack_name', 'auth_required', 'dangerous'}
-            if not required.issubset(set(reader.fieldnames)):
-                missing = required - set(reader.fieldnames)
-                return False, f"CSV missing columns: {missing}"
-
-            rows_to_insert = []
-            for row in reader:
-                rows_to_insert.append((
-                    row['service'],
-                    row['ports'],
-                    row['attack_name'],
-                    int(row.get('auth_required', 0)),
-                    int(row.get('dangerous', 0))
-                ))
-
-            c.executemany("""
-                INSERT INTO attacks (service, ports, attack_name, auth_required, dangerous) 
-                VALUES (?, ?, ?, ?, ?)
-            """, rows_to_insert)
-            
-        conn.commit()
-        conn.close()
-        return True, f"Successfully imported {len(rows_to_insert)} vectors."
-        
-    except Exception as e:
-        return False, f"Import Error: {e}"
-
-def add_attack_vector(db_path, service, ports, name, auth, dangerous):
-    """Adds a new attack vector to the DB."""
-    try:
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        c.execute("INSERT INTO attacks (service, ports, attack_name, auth_required, dangerous) VALUES (?, ?, ?, ?, ?)",
-                  (service, ports, name, 1 if auth else 0, 1 if dangerous else 0))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"[AttackDB] Error adding vector: {e}")
-        return False
-
-def delete_attack_vector(db_path, vector_id):
-    """Deletes an attack vector by ID."""
-    try:
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
-        c.execute("DELETE FROM attacks WHERE id=?", (vector_id,))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"[AttackDB] Error deleting vector: {e}")
-        return False
 
 def get_all_vectors(db_path):
     """Returns all vectors as a list of dicts."""
@@ -149,7 +96,10 @@ def get_all_vectors(db_path):
     return vectors
 
 def get_vectors_for_port(db_path, port_str):
-    """Finds vectors matching a specific port."""
+    """
+    Finds vectors matching a specific port.
+    Supports multi-port syntax like '80-8080-8000' or '80,8080'.
+    """
     vectors = []
     service_name = "unknown"
     
@@ -159,23 +109,39 @@ def get_vectors_for_port(db_path, port_str):
     try:
         conn = sqlite3.connect(db_path)
         c = conn.cursor()
+        
+        # 1. OPTIMIZATION: Use LIKE to filter candidates first.
+        # This will return "8080" when searching for "80", which is fine (we filter later).
+        # It prevents fetching the entire table every time.
         c.execute("SELECT * FROM attacks WHERE ports LIKE ?", (f"%{port_str}%",))
         rows = c.fetchall()
         
+        target_port = str(port_str).strip()
+        
         for row in rows:
-            # Row mapping: 0=id, 1=service, 2=ports, 3=name, 4=auth, 5=danger
-            if service_name == "unknown":
-                service_name = row[1]
-                
-            vectors.append({
-                "id": row[0],
-                "name": row[3],
-                "service": row[1],
-                "auth": bool(row[4]),
-                "dangerous": bool(row[5])
-            })
+            # row mapping: 0=id, 1=service, 2=ports, 3=name, 4=auth, 5=danger
+            db_ports_raw = str(row[2])
+            
+            # 2. LOGIC FIX: Normalize and Split
+            # Convert "80-8080" -> "80, 8080" -> list
+            normalized_ports = db_ports_raw.replace('-', ',').replace(';', ',')
+            valid_ports = [p.strip() for p in normalized_ports.split(',') if p.strip()]
+            
+            # 3. STRICT CHECK: Ensure exact match
+            if target_port in valid_ports:
+                if service_name == "unknown":
+                    service_name = row[1]
+                    
+                vectors.append({
+                    "id": row[0],
+                    "name": row[3],
+                    "service": row[1],
+                    "auth": bool(row[4]),
+                    "dangerous": bool(row[5])
+                })
+        
         conn.close()
     except Exception as e:
-        print(f"[AttackDB] Error querying port {port_str}: {e}")
+        print(f"[AttackDB] Error fetching vectors: {e}")
         
     return service_name, vectors

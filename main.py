@@ -1274,7 +1274,7 @@ if __name__ == "__main__":
     base_asset_path = resource_path(".")
     proj_name = os.path.basename(os.path.dirname(wizard.project_db_path)) if wizard.project_db_path else "New Project"
     
-    launcher = AppLauncher(proj_name, base_asset_path)
+    launcher = AppLauncher(proj_name, base_asset_path, project_db_path=wizard.project_db_path)
     
     # 4. Connect Hub Signal to Manager Logic
     launcher.launch_module_signal.connect(manager.launch_module)

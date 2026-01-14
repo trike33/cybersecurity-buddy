@@ -1,0 +1,23 @@
+# Nmap 7.95 scan initiated Wed Jan 14 17:05:09 2026 as: /usr/lib/nmap/nmap -sC -sV -O -iL nmap_targets.txt -oN /home/joanf/cybersecurity-buddy/test_Engagement/nmap_out
+Nmap scan report for localhost (127.0.0.1)
+Host is up (0.000076s latency).
+Not shown: 999 closed tcp ports (reset)
+PORT     STATE SERVICE VERSION
+8000/tcp open  http    SimpleHTTPServer 0.6 (Python 3.13.9)
+| http-git: 
+|   127.0.0.1:8000/.git/
+|     Git repository found!
+|     Repository description: Unnamed repository; edit this file 'description' to name the...
+|     Last commit message: hello # Please enter the commit message for your changes. Li...
+|     Remotes:
+|_      https://github.com/trike33/cybersecurity-buddy
+|_http-title: Directory listing for /
+|_http-server-header: SimpleHTTP/0.6 Python/3.13.9
+Device type: general purpose
+Running: Linux 5.X|6.X
+OS CPE: cpe:/o:linux:linux_kernel:5 cpe:/o:linux:linux_kernel:6
+OS details: Linux 5.0 - 6.2
+Network Distance: 0 hops
+
+OS and Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+# Nmap done at Wed Jan 14 17:05:16 2026 -- 1 IP address (1 host up) scanned in 7.64 seconds
